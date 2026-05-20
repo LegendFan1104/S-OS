@@ -1,0 +1,21 @@
+
+if(RISCV)
+    set(mem_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/kalloc.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/trampoline.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/uart.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/vm.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/buddysystem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/slab.c
+            PARENT_SCOPE
+    )
+elseif(LOONGARCH)
+    set(mem_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/kalloc.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/uart.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/vm.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/buddysystem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/slab.c
+            PARENT_SCOPE
+    )
+endif()
