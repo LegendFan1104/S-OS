@@ -1,0 +1,10 @@
+build/
+bin/
+image/
+*.img
+*.o
+*.d
+kernel-rv
+kernel-la
+disk.img
+data/

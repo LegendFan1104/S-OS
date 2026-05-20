@@ -1,0 +1,19 @@
+
+if(RISCV)
+    set(trap_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/riscv/kernelvec.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/riscv/trap.c
+            PARENT_SCOPE
+    )
+elseif(LOONGARCH)
+    set(trap_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/kernelvec.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/uservec.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/merror.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/tlbrefill.S
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/apic.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/extioi.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/trap.c
+            PARENT_SCOPE
+    )
+endif()

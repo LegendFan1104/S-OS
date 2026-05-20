@@ -1,0 +1,23 @@
+
+if(RISCV)
+    set(sys_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/plic.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/syscall.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysfile.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysproc.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysmem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysothers.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/syssig.c
+            PARENT_SCOPE
+    )
+elseif(LOONGARCH)
+    set(sys_sources
+            ${CMAKE_CURRENT_SOURCE_DIR}/syscall.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysfile.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysproc.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysmem.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/sysothers.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/syssig.c
+            PARENT_SCOPE
+    )
+endif()
