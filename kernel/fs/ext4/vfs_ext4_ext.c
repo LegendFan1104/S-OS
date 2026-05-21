@@ -21,6 +21,7 @@
 #include "fs/ext4/lwext4/ext4.h"
 #include "fs/ioctl.h"
 #include "lib/string.h"
+#include "fs/procfs.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -711,6 +712,9 @@ int vfs_ext_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
     // printf("%s\n", f->f_path);
     if (f->f_type == 8 || f->f_type == 9) {
         return 0;
+    }
+    if (f->f_type == FD_PROCFS) {
+        return procfs_getdents(f, dirp, count);
     }
     if (!strcmp(f->f_path, "/mnt/glibc/ltp/testcases/bin")) {
         return 0;
