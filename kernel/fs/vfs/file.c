@@ -13,6 +13,7 @@
 #include "fs/ext4/vfs_ext4_ext.h"
 #include "lib/string.h"
 #include "proc/socket.h"
+#include "fs/procfs.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -103,7 +104,10 @@ fileclose(struct file *f)
         socketclose(f->f_socket, f->f_socketnum);
         f->f_socketnum = -1;
         f->f_socketflags = 0;
-
+    } else if (ff.f_type == FD_PROCFS) {
+        if (ff.private_data) {
+            kfree(ff.private_data);
+        }
     }
 }
 
@@ -173,6 +177,8 @@ fileread(struct file *f, uint64 addr, int n)
         r = devsw[f->f_major].read(1, addr, n);
     } else if(f->f_type == FD_REG || f->f_type == FD_SYSFILE){
         r = vfs_ext_read(f, 1, addr, n);
+    } else if (f->f_type == FD_PROCFS) {
+        r = procfs_read(f, addr, n);
     } else if (f->f_type == 9) {
         char a = 0;
         copyout(myproc()->pagetable, addr, (char*)&a, sizeof(char));

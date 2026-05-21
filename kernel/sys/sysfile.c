@@ -27,6 +27,7 @@
 #include "sys/fcntl.h"
 #include "sys/poll.h"
 #include "proc/socket.h"
+#include "fs/procfs.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -494,19 +495,22 @@ sys_openat(void)
     return fd;
   }
 
-  if (!strcmp(path, "/proc/interrupts")) {
-    if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
+  // 处理 /proc 文件系统
+  if (is_procfs_path(path)) {
+    if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0) {
       return -1;
     }
-    strcpy(f->f_path, path);
-    f->f_type = FD_SYSFILE;
-    f->f_pos = 0;
+    if (procfs_open(path, f) < 0) {
+      get_fops()->close(f);
+      myproc()->ofile[fd] = 0;
+      return -1;
+    }
     f->f_flags = flags;
+    strcpy(f->f_path, path);
     return fd;
   }
 
-  if(!strcmp(path, "/etc/localtime") || !strcmp(path, "/etc/adjtime") || !strcmp(path, "/proc/mounts") || !strcmp(path, "/proc/meminfo")
-     || !strcmp(path, "/dev/rtc") || !strcmp(path, "/dev/rtc0") || !strcmp(path, "/dev/misc/rtc") || !strcmp(path, "/dev/null")) {
+  if(!strcmp(path, "/etc/localtime") || !strcmp(path, "/etc/adjtime") || !strcmp(path, "/dev/rtc") || !strcmp(path, "/dev/rtc0") || !strcmp(path, "/dev/misc/rtc") || !strcmp(path, "/dev/null")) {
       // sdcard doesn't have these files, we have to create them, or return dummy files instead
       if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
         return -1;
