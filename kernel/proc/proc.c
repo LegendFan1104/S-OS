@@ -765,7 +765,7 @@ int kill_signal(int pid, int sig) {
   struct proc *p;
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
-    if (p->pid == pid || (p->parent != NULL && p->parent->pid == pid)) {
+    if (p->pid == pid) {
       p->signal = sig;
     }
     release(&p->lock);
