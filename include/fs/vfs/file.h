@@ -38,7 +38,7 @@ struct file_vnode {
 
 
 struct file {
-    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE, FD_SOCKET, FD_SYSFILE } f_type;
+    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE, FD_SOCKET, FD_SYSFILE, FD_PROCFS } f_type;
     uint8 f_mode; // 访问模式
     uint8 f_flags; //进程打开的时候的标志
     uint32 f_socketflags; // socket使用的flag
