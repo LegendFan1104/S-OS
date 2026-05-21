@@ -303,9 +303,8 @@ static int gen_pid_stat(int pid, char *buf, int maxlen) {
     // session
     n += itoa(p->pid, buf + n);
     buf[n++] = ' ';
-    // tty_nr
-    buf[n++] = '-';
-    buf[n++] = '1';
+    // tty_nr (0 means no tty)
+    buf[n++] = '0';
     buf[n++] = ' ';
     // tpgid
     buf[n++] = '0';
