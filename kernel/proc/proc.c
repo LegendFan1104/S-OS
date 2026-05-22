@@ -150,6 +150,11 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+  // 初始化调度相关字段
+  p->sched_policy = SCHED_OTHER;
+  p->sched_priority = SCHED_DEFAULT_PRIORITY;
+  p->cpu_affinity = 0xFFFFFFFF;  // 默认允许在所有CPU上运行
+
   // printf("%p\n", p);
 
   // Allocate a trapframe page.
@@ -604,27 +609,62 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  struct proc *highest_p;
+  int highest_priority;
+  int current_cpu = cpuid();
   
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
+    highest_p = 0;
+    highest_priority = -1;
+
+    // First pass: find the highest priority runnable process
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+        // Check CPU affinity
+        if ((p->cpu_affinity & (1 << current_cpu)) == 0) {
+          release(&p->lock);
+          continue;
+        }
+        
+        // Calculate effective priority
+        // Real-time policies (FIFO, RR) have higher priority than normal
+        int effective_priority = p->sched_priority;
+        if (p->sched_policy == SCHED_FIFO || p->sched_policy == SCHED_RR) {
+          effective_priority += 100;  // Boost RT processes
+        }
+        
+        if (effective_priority > highest_priority) {
+          if (highest_p) {
+            release(&highest_p->lock);
+          }
+          highest_p = p;
+          highest_priority = effective_priority;
+        } else {
+          release(&p->lock);
+        }
+      } else {
+        release(&p->lock);
       }
-      release(&p->lock);
+    }
+
+    // Run the highest priority process if found
+    if (highest_p) {
+      // Switch to chosen process.  It is the process's job
+      // to release its lock and then reacquire it
+      // before jumping back to us.
+      highest_p->state = RUNNING;
+      c->proc = highest_p;
+      swtch(&c->context, &highest_p->context);
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+      release(&highest_p->lock);
     }
   }
 }
