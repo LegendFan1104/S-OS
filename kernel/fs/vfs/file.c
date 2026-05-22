@@ -185,6 +185,12 @@ fileread(struct file *f, uint64 addr, int n)
         return 0;
     } else if (f->f_type == 8) {
         return 0;
+    } else if (f->f_type == 10) {
+        // /dev/cpu_dma_latency - 返回0表示延迟为0us
+        char buf[4] = {0};
+        int len = n < 4 ? n : 4;
+        copyout(myproc()->pagetable, addr, buf, len);
+        return len;
     } else{
         panic("fileread");
     }
@@ -229,6 +235,10 @@ filewrite(struct file *f, uint64 addr, int n)
         ret = devsw[f->f_major].write(1, addr, n);
     } else if(f->f_type == FD_REG){
        ret = vfs_ext_write(f, 1, addr, n);
+    } else if(f->f_type == 10) {
+        // /dev/cpu_dma_latency - 接受写入但不实际处理
+        // 写入0表示禁止CPU进入深度睡眠状态
+        ret = n;
     } else {
         panic("filewrite");
     }

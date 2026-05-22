@@ -179,6 +179,16 @@ extern uint64 sys_symlinkat(void);
 extern uint64 sys_futex(void);
 extern uint64 sys_socket(void);
 
+// Scheduling system calls
+extern uint64 sys_sched_setscheduler(void);
+extern uint64 sys_sched_setparam(void);
+extern uint64 sys_sched_getparam(void);
+extern uint64 sys_sched_getscheduler(void);
+extern uint64 sys_sched_get_priority_max(void);
+extern uint64 sys_sched_get_priority_min(void);
+extern uint64 sys_sched_setaffinity(void);
+extern uint64 sys_sched_getaffinity(void);
+
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
 static uint64 (*syscalls[])(void) = {
@@ -270,6 +280,14 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlinkat] sys_symlinkat,
 [SYS_futex] sys_futex,
 [SYS_socket] sys_socket,
+[SYS_sched_setscheduler] sys_sched_setscheduler,
+[SYS_sched_setparam] sys_sched_setparam,
+[SYS_sched_getparam] sys_sched_getparam,
+[SYS_sched_getscheduler] sys_sched_getscheduler,
+[SYS_sched_get_priority_max] sys_sched_get_priority_max,
+[SYS_sched_get_priority_min] sys_sched_get_priority_min,
+[SYS_sched_setaffinity] sys_sched_setaffinity,
+[SYS_sched_getaffinity] sys_sched_getaffinity,
 };
 
 void

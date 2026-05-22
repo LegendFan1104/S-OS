@@ -567,6 +567,20 @@ sys_openat(void)
     return fd;
   }
 
+  // /dev/cpu_dma_latency - 用于控制CPU延迟状态
+  // 写入0表示禁止CPU进入深度睡眠状态，用于实时性测试
+  if(!strcmp(path, "/dev/cpu_dma_latency")){
+    if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
+      return -1;
+    }
+
+    f->f_type = 10;  // 特殊设备类型
+    f->f_pos = 0;
+    f->f_flags = flags;
+    strcpy(f->f_path, path);
+    return fd;
+  }
+
   if (!strncmp(path, "/usr/share", 10)) {
     char tmp_buf[128] = {0};
     strcpy(tmp_buf, path);
