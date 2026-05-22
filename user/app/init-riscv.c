@@ -13,6 +13,10 @@
 #define DEV_RTC 3
 #define DEV_CPU_DMA_LATENCY 0
 
+#define BUF_SIZE 4096
+#define MAX_TEST_SCRIPTS 64
+#define TESTCODE_SUFFIX "_testcode.sh"
+
 char *argv[] = { "sh", 0 };
 char *argv2[] = {"", 0};
 
@@ -49,7 +53,7 @@ char *git_arg[10][10] = {
 };
 char info1[] = "hello world";
 
-char *git_env[10] = {"HOME=/user1", NULL};
+char *git_envp[10] = {"HOME=/user1", NULL};
 
 char *bb_cmds[][10] = {
     {"echo", "#### independent command test", NULL},
@@ -110,71 +114,118 @@ char *bb_cmds[][10] = {
     {NULL}
 };
 
-const char *bb_test_success[] = {
-  "echo \"#### independent command test\"",
-  "ash -c exit",
-  "sh -c exit",
-  "basename /aaa/bbb",
-  "cal",
-  "clear",
-  "date",
-  "df",
-  "dirname /aaa/bbb",
-  "dmesg",
-  "du",
-  "expr 1 + 1",
-  "false",
-  "true",
-  "which ls",
-  "uname",
-  "uptime",
-  "printf \"abc\\n\"",
-  "ps",
-  "pwd",
-  "free",
-  "hwclock",
-  "kill 10",
-  "ls",
-  "sleep 1",
-  "echo \"#### file operation test\"",
-  "touch test.txt",
-  "echo \"hello world\" > test.txt",
-  "cat test.txt",
-  "cut -c 3 test.txt",
-  "od test.txt",
-  "head test.txt",
-  "tail test.txt",
-  "hexdump -C test.txt",
-  "md5sum test.txt",
-  "echo 'ccccccc' >> test.txt",
-  "echo 'bbbbbbb' >> test.txt",
-  "echo 'aaaaaaa' >> test.txt",
-  "echo '2222222' >> test.txt",
-  "echo '1111111' >> test.txt",
-  "echo 'bbbbbbb' >> test.txt",
-  "sort test.txt | busybox uniq",
-  "stat test.txt",
-  "strings test.txt",
-  "wc test.txt",
-  "[ -f test.txt ]",
-  "more test.txt",
-  "rm test.txt",
-  "mkdir test_dir",
-  "mv test_dir test",
-  "rmdir test",
-  "grep hello busybox_cmd.txt",
-  "cp busybox_cmd.txt busybox_cmd.bak",
-  "rm busybox_cmd.bak",
-  "find . -name busybox_cmd.txt",
-  NULL
-};
-
 char *bb_envp[] = {
   NULL,
 };
 
 char *libc_runstatic[10] = {"busybox", "sh", "run-static.sh", NULL};
 char *libc_rundynamic[10] = {"busybox", "sh", "run-dynamic.sh", NULL};
+
+// 检查字符串是否以指定后缀结尾
+int str_ends_with(const char *str, const char *suffix) {
+    int str_len = strlen(str);
+    int suffix_len = strlen(suffix);
+    if (str_len < suffix_len) return 0;
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+
+// 从文件名提取测试组名（去掉_testcode.sh后缀）
+void extract_group_name(const char *filename, char *group_name, int max_len) {
+    int len = strlen(filename);
+    int suffix_len = strlen(TESTCODE_SUFFIX);
+    int copy_len = len - suffix_len;
+    if (copy_len >= max_len) copy_len = max_len - 1;
+    memcpy(group_name, filename, copy_len);
+    group_name[copy_len] = '\0';
+}
+
+// 扫描目录中的所有*_testcode.sh脚本
+// 返回找到的脚本数量
+int scan_test_scripts(const char *dir_path, char scripts[][256], int max_scripts) {
+    int fd, nread;
+    char *buf = (char *) malloc(BUF_SIZE);
+    struct linux_dirent64 *d;
+    int bpos;
+    int count = 0;
+
+    fd = openat(AT_FDCWD, dir_path, O_RDONLY | O_DIRECTORY, 0600);
+    if (fd < 0) {
+        printf("init: cannot open directory %s\n", dir_path);
+        free(buf);
+        return 0;
+    }
+
+    for (;;) {
+        nread = getdents64(fd, (struct linux_dirent64 *) buf, BUF_SIZE);
+        if (nread <= 0)
+            break;
+
+        for (bpos = 0; bpos < nread && count < max_scripts;) {
+            d = (struct linux_dirent64 *) (buf + bpos);
+            
+            // 检查是否是普通文件且以_testcode.sh结尾
+            if (d->d_type == T_FILE && str_ends_with(d->d_name, TESTCODE_SUFFIX)) {
+                // 跳过busybox_testcode.sh，因为它需要特殊处理
+                if (strcmp(d->d_name, "busybox_testcode.sh") != 0) {
+                    strcpy(scripts[count], d->d_name);
+                    count++;
+                }
+            }
+            bpos += d->d_reclen;
+        }
+    }
+
+    close(fd);
+    free(buf);
+    return count;
+}
+
+// 运行单个测试脚本
+void run_test_script(const char *dir_path, const char *script_name) {
+    int pid;
+    char group_name[256];
+    char *test_argv[10];
+    
+    extract_group_name(script_name, group_name, sizeof(group_name));
+    
+    printf("#### OS COMP TEST GROUP START %s ####\n", group_name);
+    
+    pid = fork();
+    if (pid < 0) {
+        printf("init: fork failed for %s\n", script_name);
+    } else if (pid == 0) {
+        // 子进程
+        chdir(dir_path);
+        test_argv[0] = "busybox";
+        test_argv[1] = "sh";
+        test_argv[2] = (char *)script_name;
+        test_argv[3] = NULL;
+        execve("busybox", test_argv, NULL);
+        printf("init: exec %s failed\n", script_name);
+        exit(1);
+    } else {
+        // 父进程等待子进程完成
+        wait(0);
+    }
+    
+    printf("#### OS COMP TEST GROUP END %s ####\n", group_name);
+}
+
+// 自动扫描并运行所有测试点
+void auto_run_tests(const char *dir_path) {
+    char scripts[MAX_TEST_SCRIPTS][256];
+    int count;
+    
+    printf("init: scanning test scripts in %s...\n", dir_path);
+    
+    count = scan_test_scripts(dir_path, scripts, MAX_TEST_SCRIPTS);
+    
+    printf("init: found %d test scripts\n", count);
+    
+    for (int i = 0; i < count; i++) {
+        run_test_script(dir_path, scripts[i]);
+    }
+}
 
 int main() {
     int pid, wpid;
@@ -190,7 +241,7 @@ int main() {
     int basic_testcases = 33;
     int bb_testcases = 55;
 
-
+    // 首先运行basic测试
     printf("#### OS COMP TEST GROUP START basic-glibc ####\n");
     chdir(basic_path_glibc);
     for (int i = 0;i<basic_testcases;i++) {
@@ -221,9 +272,9 @@ int main() {
         }
         wait(0);
     }
-
     printf("#### OS COMP TEST GROUP END basic-musl ####\n");    
 
+    // 运行busybox测试
     chdir(bb_path_musl);
     pid = fork();
     if (pid < 0) {
@@ -265,165 +316,10 @@ int main() {
     wait(0);
     printf("#### OS COMP TEST GROUP END libctest-musl ####\n");
 
-
-    // // printf("#### OS COMP TEST GROUP END busybox-musl ####\n");
+    // 自动扫描并运行其他测试脚本（包括cyclictest等）
+    auto_run_tests(bb_path_musl);
+    auto_run_tests(bb_path_glibc);
+    auto_run_tests("/");
 
     shutdown();
 }
-
-
-//int main() {
-//    int pid, wpid;
-//
-//    if(openat(AT_FDCWD, "dev/tty", O_RDWR, 0600) < 0){
-//      mknod("dev/tty", CONSOLE, 0);
-//      openat(AT_FDCWD, "dev/tty", O_RDWR, 0600);
-//    }
-//    dup(0);  // stdout
-//    dup(0);  // stderr
-//
-//    mkdirat(AT_FDCWD, "/etc", 0666);
-//
-//    chdir("/mnt/glibc");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test1, NULL);
-//        printf("init: exec busybox_testcode failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    chdir("/mnt/musl");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test1, NULL);
-//        printf("init: exec busybox_testcode failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    chdir("/mnt/glibc");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test2, NULL);
-//        printf("init: exec final_test2 failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    chdir("/mnt/musl");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test2, NULL);
-//        printf("init: exec final_test2 failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    chdir("/mnt/glibc");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test3, NULL);
-//        printf("init: exec final_test2 failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    chdir("/mnt/musl");
-//    pid = fork();
-//    if (pid < 0) {
-//        printf("init: fork failed\n");
-//        exit(1);
-//    }
-//    if(pid == 0) {
-//        execve("busybox", final_test3, NULL);
-//        printf("init: exec final_test2 failed\n");
-//        exit(1);
-//    }
-//    wait(0);
-//
-//    shutdown();
-//}
-
-// int main() {
-//     int pid, wpid;
-//
-//     if(openat(AT_FDCWD, "dev/tty", O_RDWR, 0600) < 0){
-//       mknod("dev/tty", CONSOLE, 0);
-//       openat(AT_FDCWD, "dev/tty", O_RDWR, 0600);
-//     }
-//     dup(0);  // stdout
-//     dup(0);  // stderr
-//
-//     mkdirat(AT_FDCWD, "/etc", 0666);
-//
-//     chdir("/mnt/glibc");
-//     // for (int i=0;i<2;i++) {
-//     //     pid = fork();
-//     //     if (pid < 0) {
-//     //         printf("init: fork failed\n");
-//     //         exit(1);
-//     //     }
-//     //     if(pid == 0) {
-//     //         execve("./usr/bin/git", git_arg[i], NULL);
-//     //         printf("init: exec busybox_testcode failed\n");
-//     //         exit(1);
-//     //     }
-//     //     wait(0);
-//     // }
-//     //
-//     // pid = fork();
-//     // if (pid < 0) {
-//     //     printf("init: fork failed\n");
-//     //     exit(1);
-//     // }
-//     // if(pid == 0) {
-//     //     execve("busybox", final_site, NULL);
-//     //     printf("init: exec busybox_testcode failed\n");
-//     //     exit(1);
-//     // }
-//     // wait(0);
-//
-//     for (int i=2;i<5;i++) {
-//         pid = fork();
-//         if (pid < 0) {
-//             printf("init: fork failed\n");
-//             exit(1);
-//         }
-//         if(pid == 0) {
-//             execve("./usr/bin/git", git_arg[i], NULL);
-//             printf("init: exec busybox_testcode failed\n");
-//             exit(1);
-//         }
-//         wait(0);
-//     }
-//
-//
-//
-//
-//     shutdown();
-// }
-
-/*
-
-*/
