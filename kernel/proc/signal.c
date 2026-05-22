@@ -65,7 +65,14 @@ void default_handle(struct proc *p, int signum) {
             p->killed = 1;
             break;
         case SIGCHLD:
-            wait4(-1, 0, 0);
+        case SIGSTOP:
+        case SIGTSTP:
+        case SIGTTIN:
+        case SIGTTOU:
+        case SIGCONT:
+            break;
+        default:
+            p->killed = 1;
             break;
     }
 }

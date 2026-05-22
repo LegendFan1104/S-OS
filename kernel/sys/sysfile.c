@@ -838,7 +838,7 @@ uint64 sys_getdents64(void) {
   }
   uint64 nread = 0;
 
-  if ((nread = vfs_ext_getdents(f, d, len)) < 0) {
+  if ((nread = vfs_ext_getdents(f, d, MIN(len, PGSIZE))) < 0) {
     kfree(d);
     return -1;
   }
