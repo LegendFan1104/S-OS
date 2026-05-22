@@ -7,3 +7,5 @@ image/
 kernel-rv
 kernel-la
 data/
+user/initcode-la
+user/initcode-rv
