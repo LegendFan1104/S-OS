@@ -47,7 +47,9 @@ endif()
 project(SOS C ASM)
 include_directories(include)
 
-include_directories(libc)
+if(RISCV)
+    include_directories(libc)
+endif()
 
 add_subdirectory(user) # make user apps
 add_subdirectory(kernel) # make kernel
