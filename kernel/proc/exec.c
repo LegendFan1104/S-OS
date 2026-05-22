@@ -38,6 +38,52 @@ struct commit {
 
 static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
 
+// Try to handle shebang (#!) line.
+// On success, returns interpreter inode pointer and sets *out_argv to new argv.
+// On failure, returns 0.
+static struct inode *
+try_shebang(struct inode *ip, char *path, char **argv,
+            char *interp_buf, int interp_size, char **new_argv)
+{
+  char shebang_buf[256];
+
+  int n = ip->i_op->read(ip, 0, (uint64)shebang_buf, 0, sizeof(shebang_buf));
+  if (n < 2 || shebang_buf[0] != '#' || shebang_buf[1] != '!')
+    return 0;
+
+  // Find end of first line
+  int i = 2;
+  while (i < n && shebang_buf[i] != '\n')
+    i++;
+
+  // Skip whitespace after #!
+  int start = 2;
+  while (start < i && (shebang_buf[start] == ' ' || shebang_buf[start] == '\t'))
+    start++;
+
+  // Find interpreter path
+  int end = start;
+  while (end < i && shebang_buf[end] != ' ' && shebang_buf[end] != '\t')
+    end++;
+
+  if (end <= start || end - start >= interp_size)
+    return 0;
+
+  memcpy(interp_buf, shebang_buf + start, end - start);
+  interp_buf[end - start] = '\0';
+
+  // Build new argv: [interpreter, original_script, original_args...]
+  new_argv[0] = interp_buf;
+  new_argv[1] = path;
+  int j = 2;
+  for (int k = 1; argv[k] && j < MAXARG - 1; k++, j++)
+    new_argv[j] = argv[k];
+  new_argv[j] = 0;
+
+  // Open interpreter file
+  return namei(interp_buf);
+}
+
 int flags2perm(int flags)
 {
 #ifdef RISCV
@@ -146,9 +192,23 @@ execve(char *path, char **argv, char **envp)
   if(ip->i_op->read(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;
 
-
-  if(elf.magic != ELF_MAGIC)
-    goto bad;
+  if(elf.magic != ELF_MAGIC) {
+    char interp_path[128];
+    char *new_argv[MAXARG];
+    struct inode *interp_ip = try_shebang(ip, path, argv, interp_path, sizeof(interp_path), new_argv);
+    if (interp_ip) {
+      ip->i_op->unlock(ip);
+      ip = interp_ip;
+      ip->i_op->lock(ip);
+      argv = new_argv;
+      if(ip->i_op->read(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+        goto bad;
+      if(elf.magic != ELF_MAGIC)
+        goto bad;
+    } else {
+      goto bad;
+    }
+  }
 
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
@@ -422,9 +482,23 @@ execve(char *path, char **argv, char **envp)
   if(ip->i_op->read(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;
 
-
-  if(elf.magic != ELF_MAGIC)
-    goto bad;
+  if(elf.magic != ELF_MAGIC) {
+    char interp_path[128];
+    char *new_argv[MAXARG];
+    struct inode *interp_ip = try_shebang(ip, path, argv, interp_path, sizeof(interp_path), new_argv);
+    if (interp_ip) {
+      ip->i_op->unlock(ip);
+      ip = interp_ip;
+      ip->i_op->lock(ip);
+      argv = new_argv;
+      if(ip->i_op->read(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+        goto bad;
+      if(elf.magic != ELF_MAGIC)
+        goto bad;
+    } else {
+      goto bad;
+    }
+  }
 
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
