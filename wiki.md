@@ -1,8 +1,9 @@
-# SoS (Super operating System) 操作系统架构文档
+# SOS (Super operating System) 操作系统架构文档
+
 
 ## 项目概述
 
-**SoS** 是由武汉大学 S-OS 队开发的一个支持 **RISC-V** 和 **LoongArch** 双 CPU 架构的操作系统内核。项目以类 Unix 设计为目标，实现了完整的多进程、虚拟内存、EXT4 文件系统、信号处理、Socket 通信等机制，能够运行 BusyBox 等用户态程序。
+**SOS** 是一个支持 **RISC-V** 和 **LoongArch** 双 CPU 架构的操作系统内核。项目以类 Unix 设计为目标，实现了完整的多进程、虚拟内存、EXT4 文件系统、信号处理、Socket 通信等机制，能够运行 BusyBox 等用户态程序。
 
 ## 整体架构
 
