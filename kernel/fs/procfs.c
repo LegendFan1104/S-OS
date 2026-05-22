@@ -556,15 +556,20 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
     if (!pf) {
         return -1;
     }
-    
+
     if (pf->type != PROCFS_ROOT && pf->type != PROCFS_PID_DIR) {
         return -1;
     }
-    
+
+    // All entries already returned on a previous call
+    if (pf->offset > 0) {
+        return 0;
+    }
+
     struct linux_dirent64 *d = dirp;
     int totlen = 0;
     int index = 0;
-    
+
     // 添加 . 和 ..
     const char *std_entries[] = { ".", ".." };
     for (int i = 0; i < 2; i++) {
@@ -573,21 +578,21 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
         if (reclen < sizeof(struct linux_dirent64)) {
             reclen = sizeof(struct linux_dirent64);
         }
-        
+
         if (totlen + reclen > count) {
             break;
         }
-        
+
         strncpy(d->d_name, std_entries[i], MAXPATH);
         d->d_type = T_DIR;
         d->d_ino = 1;
         d->d_off = ++index;
         d->d_reclen = reclen;
-        
+
         totlen += reclen;
         d = (struct linux_dirent64 *)((char *)d + reclen);
     }
-    
+
     if (pf->type == PROCFS_ROOT) {
         // 添加 /proc/self
         {
@@ -596,19 +601,19 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
             if (reclen < sizeof(struct linux_dirent64)) {
                 reclen = sizeof(struct linux_dirent64);
             }
-            
+
             if (totlen + reclen <= count) {
                 strncpy(d->d_name, "self", MAXPATH);
                 d->d_type = T_LNK;
                 d->d_ino = 2;
                 d->d_off = ++index;
                 d->d_reclen = reclen;
-                
+
                 totlen += reclen;
                 d = (struct linux_dirent64 *)((char *)d + reclen);
             }
         }
-        
+
         // 添加系统文件
         const char *sys_files[] = { "uptime", "meminfo", "stat", "loadavg", "version", "mounts", "interrupts" };
         for (int i = 0; i < 7; i++) {
@@ -617,27 +622,27 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
             if (reclen < sizeof(struct linux_dirent64)) {
                 reclen = sizeof(struct linux_dirent64);
             }
-            
+
             if (totlen + reclen > count) {
                 break;
             }
-            
+
             strncpy(d->d_name, sys_files[i], MAXPATH);
             d->d_type = T_FILE;
             d->d_ino = 100 + i;
             d->d_off = ++index;
             d->d_reclen = reclen;
-            
+
             totlen += reclen;
             d = (struct linux_dirent64 *)((char *)d + reclen);
         }
-        
+
         // 添加进程目录
         for (int i = 0; i < NPROC; i++) {
             if (proc[i].state == UNUSED) {
                 continue;
             }
-            
+
             char pid_str[16];
             itoa(proc[i].pid, pid_str);
             int namelen = strlen(pid_str);
@@ -645,17 +650,17 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
             if (reclen < sizeof(struct linux_dirent64)) {
                 reclen = sizeof(struct linux_dirent64);
             }
-            
+
             if (totlen + reclen > count) {
                 break;
             }
-            
+
             strncpy(d->d_name, pid_str, MAXPATH);
             d->d_type = T_DIR;
             d->d_ino = 1000 + proc[i].pid;
             d->d_off = ++index;
             d->d_reclen = reclen;
-            
+
             totlen += reclen;
             d = (struct linux_dirent64 *)((char *)d + reclen);
         }
@@ -668,21 +673,22 @@ int procfs_getdents(struct file *f, struct linux_dirent64 *dirp, int count) {
             if (reclen < sizeof(struct linux_dirent64)) {
                 reclen = sizeof(struct linux_dirent64);
             }
-            
+
             if (totlen + reclen > count) {
                 break;
             }
-            
+
             strncpy(d->d_name, pid_files[i], MAXPATH);
             d->d_type = T_FILE;
             d->d_ino = 200 + i;
             d->d_off = ++index;
             d->d_reclen = reclen;
-            
+
             totlen += reclen;
             d = (struct linux_dirent64 *)((char *)d + reclen);
         }
     }
-    
+
+    pf->offset = 1;
     return totlen;
 }
