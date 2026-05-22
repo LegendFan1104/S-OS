@@ -13,19 +13,19 @@ char *argv[] = { "sh", 0 };
 char *argv2[] = {"", 0};
 char *argv3[] = {"/mnt/", 0};
 
-char basic_path_musl[] = "/mnt/musl/";
-char basic_path_glibc[] = "/glibc/basic/";
+char basic_path_musl[] = "/mnt/loongarch/musl/";
+char basic_path_glibc[] = "/mnt/loongarch/glibc/";
 char *basic_name[] = {"brk", "chdir", "clone", "close", "dup", "dup2", "execve", "exit", "fork", "fstat", "getcwd", "getdents", "getpid",
     "getppid", "gettimeofday", "mkdir_", "mmap", "mount", "munmap", "open", "openat", "pipe", "read", "sleep", "test_echo", "times",
     "umount", "uname", "unlink", "wait", "waitpid", "write", "yield",
 };
 
-char bb_path_musl[] = "/mnt/musl/";
-char bb_path_glibc[] = "/mnt/glibc/";
+char bb_path_musl[] = "/mnt/loongarch/musl/";
+char bb_path_glibc[] = "/mnt/loongarch/glibc/";
 
 
-char bb_cmd_file_musl[] = "/mnt/musl/busybox_cmd.txt";
-char bb_cmd_file_glibc[] = "/mnt/glibc/busybox_cmd.txt";
+char bb_cmd_file_musl[] = "/mnt/loongarch/musl/busybox_cmd.txt";
+char bb_cmd_file_glibc[] = "/mnt/loongarch/glibc/busybox_cmd.txt";
 char *libc_testcode[10] = {"busybox", "sh", "/libc_test.sh", NULL};
 
 
@@ -177,7 +177,7 @@ int main() {
     int basic_testcases = 33;
 
     printf("#### OS COMP TEST GROUP START basic-musl ####\n");
-    chdir("/loongarch/musl/");
+    chdir(basic_path_musl);
     for (int i = 0;i<basic_testcases;i++) {
         pid = fork();
         if (pid < 0) {
@@ -193,7 +193,7 @@ int main() {
     }
     printf("#### OS COMP TEST GROUP END basic-musl ####\n");
 
-    chdir("/loongarch/glibc/");
+    chdir(basic_path_glibc);
     printf("#### OS COMP TEST GROUP START basic-glibc ####\n");
     for (int i = 0;i<basic_testcases;i++) {
         pid = fork();
@@ -209,8 +209,8 @@ int main() {
     }
     printf("#### OS COMP TEST GROUP END basic-glibc ####\n");
 
-    run_busybox_group_by_cmdfile("busybox-musl", bb_path_musl, bb_cmd_file_musl, "/mnt/glibc/busybox");
-    run_busybox_group_by_cmdfile("busybox-glibc", bb_path_glibc, bb_cmd_file_glibc, "/mnt/glibc/busybox");
+    run_busybox_group_by_cmdfile("busybox-musl", bb_path_musl, bb_cmd_file_musl, "/mnt/loongarch/glibc/busybox");
+    run_busybox_group_by_cmdfile("busybox-glibc", bb_path_glibc, bb_cmd_file_glibc, "/mnt/loongarch/glibc/busybox");
 
     // printf("#### OS COMP TEST GROUP START libctest-musl ####\n");
     // chdir(bb_path_musl);
