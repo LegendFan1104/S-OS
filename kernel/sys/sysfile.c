@@ -306,13 +306,45 @@ sys_fstatat(void)
 }
 
 uint64 sys_statx(void) {
+  int dirfd, flags, mask;
+  char pathname[MAXPATH];
+  uint64 st;
   struct file *f;
-  uint64 st; // user pointer to struct stat
+
+  argint(2, &flags);
+  argint(3, &mask);
   argaddr(4, &st);
-  if(argfd(0, 0, &f) < 0)
+
+  // pathname is NULL or empty: fd-based statx
+  if (argstr(1, pathname, MAXPATH) < 0 || pathname[0] == '\0') {
+    if (argfd(0, 0, &f) < 0)
+      return -1;
+    return get_fops()->statx(f, st);
+  }
+
+  // path-based statx
+  argint(0, &dirfd);
+  struct filesystem *fs = get_fs_from_path(pathname);
+  if (fs == NULL || fs->type != EXT4)
     return -1;
 
-  return get_fops()->statx(f, st);
+  const char *dirpath = (dirfd == AT_FDCWD) ? myproc()->cwd.path : myproc()->ofile[dirfd]->f_path;
+  char absolute_path[MAXPATH] = {0};
+  get_absolute_path(pathname, dirpath, absolute_path);
+
+  f = filealloc();
+  if (f == NULL)
+    return -1;
+  f->f_flags = O_RDONLY;
+  f->f_count = 1;
+  strcpy(f->f_path, absolute_path);
+  if (vfs_ext_openat(f) < 0) {
+    get_fops()->close(f);
+    return -1;
+  }
+  int ret = get_fops()->statx(f, st);
+  get_fops()->close(f);
+  return ret;
 }
 
 // Create the path new as a link to the same inode as old.
