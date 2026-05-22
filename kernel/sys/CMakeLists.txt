@@ -8,6 +8,7 @@ if(RISCV)
             ${CMAKE_CURRENT_SOURCE_DIR}/sysmem.c
             ${CMAKE_CURRENT_SOURCE_DIR}/sysothers.c
             ${CMAKE_CURRENT_SOURCE_DIR}/syssig.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/syssched.c
             PARENT_SCOPE
     )
 elseif(LOONGARCH)
@@ -18,6 +19,7 @@ elseif(LOONGARCH)
             ${CMAKE_CURRENT_SOURCE_DIR}/sysmem.c
             ${CMAKE_CURRENT_SOURCE_DIR}/sysothers.c
             ${CMAKE_CURRENT_SOURCE_DIR}/syssig.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/syssched.c
             PARENT_SCOPE
     )
 endif()

@@ -5,6 +5,18 @@
 #include "proc/signal.h"
 #include "proc/trapframe.h"
 
+// Scheduling policies
+#define SCHED_OTHER     0
+#define SCHED_FIFO      1
+#define SCHED_RR        2
+#define SCHED_BATCH     3
+#define SCHED_IDLE      5
+
+// Priority limits
+#define SCHED_MIN_PRIORITY      1
+#define SCHED_MAX_PRIORITY      99
+#define SCHED_DEFAULT_PRIORITY  0
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -92,6 +104,11 @@ struct proc {
 
   int uid;  // 用户ID
   int gid;  // 组ID
+
+  // 调度相关
+  int sched_policy;           // 调度策略: SCHED_OTHER, SCHED_FIFO, SCHED_RR
+  int sched_priority;         // 调度优先级 (1-99 for RT)
+  uint64 cpu_affinity;        // CPU亲和性掩码
 };
 
 #define WNOHANG     0x01    // Don't block waiting
