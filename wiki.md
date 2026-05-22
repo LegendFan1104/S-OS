@@ -54,7 +54,7 @@ sos/
 │   ├── sys/          # 系统调用入口
 │   └── trap/         # 中断/异常处理
 ├── include/          # 内核头文件 (按子系统组织)
-├── include2/         # newlib C库头文件
+├── libc/         # newlib C库头文件
 ├── user/             # 用户程序及initcode
 ├── scripts/          # QEMU启动/GDB调试脚本
 ├── data/             # 镜像挂载点

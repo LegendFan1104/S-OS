@@ -103,3 +103,13 @@
 #define SYS_symlinkat 36
 #define SYS_futex 98
 #define SYS_socket 198
+
+// Scheduling system calls
+#define SYS_sched_setscheduler  119
+#define SYS_sched_setparam      118
+#define SYS_sched_getparam      121
+#define SYS_sched_getscheduler  120
+#define SYS_sched_get_priority_max  125
+#define SYS_sched_get_priority_min  126
+#define SYS_sched_setaffinity   122
+#define SYS_sched_getaffinity   123
