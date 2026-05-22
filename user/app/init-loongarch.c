@@ -227,27 +227,34 @@ int scan_test_scripts(const char *dir_path, char scripts[][256], int max_scripts
     return count;
 }
 
-// 运行单个测试脚本
+// 运行单个测试脚本（直接执行，不通过busybox）
 void run_test_script(const char *dir_path, const char *script_name) {
     int pid;
     char group_name[256];
     char *test_argv[10];
+    char script_path[256];
     
     extract_group_name(script_name, group_name, sizeof(group_name));
     
     printf("#### OS COMP TEST GROUP START %s ####\n", group_name);
     
+    // 构建脚本的完整路径
+    strcpy(script_path, dir_path);
+    int len = strlen(script_path);
+    if (script_path[len - 1] != '/') {
+        strcat(script_path, "/");
+    }
+    strcat(script_path, script_name);
+    
     pid = fork();
     if (pid < 0) {
         printf("init: fork failed for %s\n", script_name);
     } else if (pid == 0) {
-        // 子进程
+        // 子进程 - 直接执行脚本
         chdir(dir_path);
-        test_argv[0] = "busybox";
-        test_argv[1] = "sh";
-        test_argv[2] = (char *)script_name;
-        test_argv[3] = NULL;
-        execve("busybox", test_argv, NULL);
+        test_argv[0] = (char *)script_name;
+        test_argv[1] = NULL;
+        execve(script_path, test_argv, NULL);
         printf("init: exec %s failed\n", script_name);
         exit(1);
     } else {
