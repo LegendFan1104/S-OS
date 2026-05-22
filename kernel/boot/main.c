@@ -40,7 +40,7 @@ void main()
 		consoleinit();
 		printfinit();
 		printf("\n");
-		printf("AdddOS kernel is booting\n");
+		printf("SOS kernel is booting\n");
 		printf("\n");
 		kinit(); // 伙伴分配器初始化
 		kvminit(); // create kernel page table
@@ -70,7 +70,7 @@ void main()
 		consoleinit();
 		printfinit();
 		printf("\n");
-		printf("AdddOS kernel is booting\n");
+		printf("SOS kernel is booting\n");
 		printf("\n");
 //		pci_device_init();
 
