@@ -2,25 +2,25 @@ MAKEFLAGS += --no-print-directory
 
 
 build-release-riscv:
-	@echo "Building SOS release"
+	@echo "Building SOS release (RISC-V)"
 	@cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DRISCV=ON
 	@cmake --build build --target build  -- -j 8
 	@echo "Done"
 
 build-release-loongarch:
-	@echo "Building SOS release"
+	@echo "Building SOS release (LoongArch)"
 	@cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLOONGARCH=ON
 	@cmake --build build --target build  -- -j 8
 	@echo "Done"
 
 build-debug-riscv:
-	@echo "Building SOS debug"
+	@echo "Building SOS debug (RISC-V)"
 	@cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DRISCV=ON
 	@cmake --build build --target build -- -j 8
 	@echo "Done"
 
 build-debug-loongarch:
-	@echo "Building SOS debug"
+	@echo "Building SOS debug (LoongArch)"
 	@cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DLOONGARCH=ON
 	@cmake --build build --target build -- -j 8
 	@echo "Done"
@@ -35,18 +35,26 @@ clean:
 
 
 make-image:
-	$(call build_image,fs)
+	$(call build_image,fs,disk.img)
+
+make-image-la:
+	$(call build_image,fs-la,disk-la.img)
 
 make-image-force:
 	@rm -f image/fs.img
-	$(call build_image,fs)
+	$(call build_image,fs,disk.img)
+
+make-image-force-la:
+	@rm -f image/fs-la.img
+	$(call build_image,fs-la,disk-la.img)
 
 all: build-release-riscv make-image
 	@cp bin/kernel-riscv kernel-rv
 	@cp image/fs.img disk.img
 	@${MAKE} clean
-	@${MAKE} build-release-loongarch
+	@${MAKE} build-release-loongarch make-image-la
 	@cp bin/kernel-loongarch kernel-la
+	@cp image/fs-la.img disk-la.img
 
 
 define build_image
@@ -57,7 +65,8 @@ define build_image
 		dd if=/dev/zero of=$(1).img bs=1M count=512 ;\
 		mkfs.ext4 -O ^metadata_csum -F -b 4096 -L rootfs $(1).img ;\
 		mount -o sync -t ext4 $(1).img data/mnt ;\
-		cp -r user/bin/* data/mnt/ ;\
+		if [ -d "user/bin" ]; then cp -r user/bin/* data/mnt/ ; fi ;\
+		if [ -d "bin/app" ]; then cp -r bin/app/* data/mnt/ ; fi ;\
 		sync data/mnt ;\
 		umount -v data/mnt;\
 		md5sum $(1).img ;\
@@ -74,9 +83,9 @@ qemu-riscv: make-image-force build-release-riscv
 	@sh scripts/qemu.sh
 .PHONY:build-release
 
-qemu-loongarch: make-image-force build-release-loongarch
+qemu-loongarch: make-image-force-la build-release-loongarch
 	@cp bin/kernel-loongarch kernel-la
-	@cp image/fs.img disk.img
+	@cp image/fs-la.img disk-la.img
 	@sh scripts/qemu-loongarch.sh
 .PHONY:build-release
 
