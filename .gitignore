@@ -9,3 +9,4 @@ kernel-la
 data/
 user/initcode-la
 user/initcode-rv
+oskernel2025-a20/

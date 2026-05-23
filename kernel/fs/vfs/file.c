@@ -14,6 +14,11 @@
 #include "lib/string.h"
 #include "proc/socket.h"
 #include "fs/procfs.h"
+#include "fs/epoll.h"
+#include "fs/eventfd.h"
+#include "fs/timerfd.h"
+#include "fs/inotify.h"
+#include "fs/memfd.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -108,6 +113,16 @@ fileclose(struct file *f)
         if (ff.private_data) {
             kfree(ff.private_data);
         }
+    } else if (ff.f_type == FD_EPOLL) {
+        epoll_close(ff.epoll);
+    } else if (ff.f_type == FD_EVENTFD) {
+        eventfd_close(&ff);
+    } else if (ff.f_type == FD_TIMERFD) {
+        timerfd_close(&ff);
+    } else if (ff.f_type == FD_INOTIFY) {
+        inotify_close(&ff);
+    } else if (ff.f_type == FD_MEMFD) {
+        memfd_close(&ff);
     }
 }
 
