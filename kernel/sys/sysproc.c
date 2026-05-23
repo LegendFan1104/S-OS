@@ -84,28 +84,15 @@ int
 sys_wait4(void)
 {
   int pid;
-  uint64 status;
+  uint64 status; 
   int options;
-
+  
   argint(0, &pid);
   argaddr(1, &status);
   argint(2, &options);
 
+  
   return wait4(pid, (int*)status, options);
-}
-
-uint64
-sys_waitid(void)
-{
-  int idtype, id, options;
-  uint64 infop;
-
-  argint(0, &idtype);
-  argint(1, &id);
-  argaddr(2, &infop);
-  argint(3, &options);
-
-  return waitid(idtype, id, (siginfo_t*)infop, options);
 }
 
 int
@@ -207,46 +194,6 @@ uint64 sys_gettid(void) {
 
 //在线程崩溃后将list中的锁释放，唤醒等待线程
 uint64 sys_set_robust_list(void) {
-  uint64 head_addr;
-  int len;
-  
-  argaddr(0, &head_addr);
-  argint(1, &len);
-  
-  struct proc *p = myproc();
-  struct robust_list_head *head = (struct robust_list_head *)head_addr;
-  
-  return futex_set_robust_list(p, head, len);
-}
-
-// Get robust list for a process
-uint64 sys_get_robust_list(void) {
-  int pid;
-  uint64 head_ptr_addr, len_ptr_addr;
-  
-  argint(0, &pid);
-  argaddr(1, &head_ptr_addr);
-  argaddr(2, &len_ptr_addr);
-  
-  struct proc *p = myproc();
-  struct robust_list_head *head;
-  size_t len;
-  
-  int ret = futex_get_robust_list(p, pid, &head, &len);
-  if (ret < 0)
-    return ret;
-  
-  if (head_ptr_addr) {
-    uint64 head_val = (uint64)head;
-    if (copyout(p->pagetable, head_ptr_addr, (char*)&head_val, sizeof(head_val)) < 0)
-      return -14;  // -EFAULT
-  }
-  
-  if (len_ptr_addr) {
-    if (copyout(p->pagetable, len_ptr_addr, (char*)&len, sizeof(len)) < 0)
-      return -14;  // -EFAULT
-  }
-  
   return 0;
 }
 
@@ -328,51 +275,68 @@ uint64 sys_futex(void) {
   argaddr(4, &uaddr2);
   argint(5, &val3);
 
-  int cmd = futex_op & FUTEX_CMD_MASK;
-  int flags = futex_op & ~FUTEX_CMD_MASK;
-  int clockrt = (flags & FUTEX_CLOCK_REALTIME) ? 1 : 0;
-  
-  switch (cmd) {
+  struct proc *p = myproc();
+
+  futex_op &= ~FUTEX_PRIVATE_FLAG;
+  switch (futex_op)
+  {
     case FUTEX_WAIT:
-      return futex_wait(uaddr, val, timeoutaddr, clockrt, 0xffffffff);
-    
+      acquire(&p->lock);
+    int futex_word;
+    copyin(p->pagetable, (char*)&futex_word, uaddr, sizeof(int));
+    // printf("[sys_futex] futex_word: %d\n", futex_word);
+    if(futex_word != val){
+      release(&p->lock);
+      return -11;
+    }
+
+    struct timespec ts = { 0 };
+    uint64 n, timestamp;
+    if(timeoutaddr){
+      if(copyin(p->pagetable, (char*)&ts, timeoutaddr, sizeof(struct timespec)) < 0)
+        return -1;
+      n = (ts.tv_sec + 3) * FREQUENCY + (ts.tv_nsec * FREQUENCY) / 1000000000;
+
+      timestamp = rdtime();
+      while(rdtime() - timestamp < n){
+        if(p->killed == SIGKILL){
+          release(&p->lock);
+          return -1;
+        }
+        sleep1(&ticks, (void*)uaddr, &p->lock);
+        if(p->chan2 == 0){
+          // printf("[sys_futex] pid %d woke up before timeout!\n", p->pid);
+          release(&p->lock);
+          return 0;
+        }
+      }
+      p->chan2 = 0;
+      release(&p->lock);
+      // printf("[sys_futex] pid %d woke up from timeout!\n", p->pid);
+      return 0;
+    }
+
+    if(val == -1){
+      futex_word = 1;
+      copyout(p->pagetable, uaddr, (char*)&futex_word, sizeof(int));
+      release(&p->lock);
+      return 0;
+    }
+
+    sleep1((void*)uaddr, (void*)uaddr, &p->lock);
+    release(&p->lock);
+    // printf("[sys_futex] pid %d woke up!\n", p->pid);
+    return 0;
     case FUTEX_WAKE:
-      return futex_wake(uaddr, val, 0xffffffff);
-    
-    case FUTEX_WAIT_BITSET:
-      return futex_wait(uaddr, val, timeoutaddr, clockrt, (uint32_t)val3);
-    
-    case FUTEX_WAKE_BITSET:
-      return futex_wake(uaddr, val, (uint32_t)val3);
-    
+      return wakeup2((void*)uaddr, val, NULL, 0);
     case FUTEX_REQUEUE:
-      return futex_requeue(uaddr, val, (int)timeoutaddr, uaddr2);
-    
-    case FUTEX_CMP_REQUEUE:
-      return futex_cmp_requeue(uaddr, val, (int)timeoutaddr, uaddr2, val3);
-    
-    case FUTEX_WAKE_OP:
-      return futex_wake_op(uaddr, uaddr2, val, (int)timeoutaddr, val3);
-    
-    case FUTEX_LOCK_PI:
-      return futex_lock_pi(uaddr, timeoutaddr, 0);
-    
-    case FUTEX_UNLOCK_PI:
-      return futex_unlock_pi(uaddr);
-    
-    case FUTEX_TRYLOCK_PI:
-      return futex_trylock_pi(uaddr);
-    
-    case FUTEX_FD:
-    case FUTEX_WAIT_REQUEUE_PI:
-    case FUTEX_CMP_REQUEUE_PI:
-      // Not implemented yet
-      return -38;  // -ENOSYS
-    
+      return wakeup2((void*)uaddr, val, (void*)uaddr2, (int)timeoutaddr);
     default:
-      printf("sys_futex: unknown cmd %d\n", cmd);
-      return -22;  // -EINVAL
+      panic("unknown futex operand!\n");
   }
+
+  return 0;
+
 }
 
 

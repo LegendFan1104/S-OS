@@ -164,7 +164,7 @@ int vfs_ext_ioctl(struct file *f, int cmd, void *args) {
     int r = 0;
     struct ext4_file *file = (struct ext4_file *)f -> f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_ioctl: cannot get ext4 file\n");
     }
 
     switch (cmd) {
@@ -197,12 +197,12 @@ int vfs_ext_read(struct file *f, int user_addr, const uint64 addr, int n) {
         }
         char *buf = kmalloc(n + 1);
         if (buf == NULL) {
-            return -12;  // -ENOMEM
+            panic("vfs_ext_read: kalloc failed\n");
         }
         int byteread = read_interrupts(buf);
         if (copyout(myproc()->pagetable, addr, buf, byteread) != 0) {
             kfree(buf);
-            return -14;  // -EFAULT
+            return 0;
         }
         kfree(buf);
         f->f_pos = -1;
@@ -212,14 +212,14 @@ int vfs_ext_read(struct file *f, int user_addr, const uint64 addr, int n) {
     uint64 byteread = 0;
     struct ext4_file *file = (struct ext4_file *)f -> f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_read: cannot get ext4 file\n");
     }
     int r = 0;
     if (user_addr) {
         char *buf = kmalloc(n + 1);
         uint64 mread = 0;
         if (buf == NULL) {
-            return -12;  // -ENOMEM
+            panic("vfs_ext_read: kalloc failed\n");
         }
         r = ext4_fread(file, buf, n, &byteread);
         if (r != EOK) {
@@ -248,7 +248,7 @@ int vfs_ext_readat(struct file *f, int user_addr, const uint64 addr, int n, int 
     uint64 byteread = 0;
     struct ext4_file *file = (struct ext4_file *)f -> f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_read: cannot get ext4 file\n");
     }
     int r = ext4_fseek(file, offset, SEEK_SET);
     if (r != EOK) {
@@ -258,7 +258,7 @@ int vfs_ext_readat(struct file *f, int user_addr, const uint64 addr, int n, int 
         char *buf = kmalloc(n + 1);
         uint64 mread = 0;
         if (buf == NULL) {
-            return -12;  // -ENOMEM
+            panic("vfs_ext_read: kalloc failed\n");
         }
         r = ext4_fread(file, buf, n, &byteread);
         if (r != EOK) {
@@ -289,7 +289,7 @@ int vfs_ext_write(struct file *f, int user_addr, const uint64 addr, int n) {
     uint64 bytewrite = 0;
     struct ext4_file *file = (struct ext4_file *)f -> f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_write: cannot get ext4 file\n");
     }
     // printf("%p\n", addr);
     int r = 0;
@@ -297,7 +297,7 @@ int vfs_ext_write(struct file *f, int user_addr, const uint64 addr, int n) {
         char *buf = kmalloc(n + 1);
         uint64 mwrite = 0;
         if (buf == NULL) {
-            return -12;  // -ENOMEM
+            panic("vfs_ext_read: kalloc failed\n");
         }
         if (copyin(myproc()->pagetable, buf, addr, n) != 0) {
             kfree(buf);
@@ -325,7 +325,7 @@ int vfs_ext_writeat(struct file *f, int user_addr, const uint64 addr, int n, int
     uint64 bytewrite = 0;
     struct ext4_file *file = (struct ext4_file *)f -> f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_writeat: cannot get ext4 file\n");
     }
 
     // Save original file position
@@ -370,8 +370,7 @@ int vfs_ext_writeat(struct file *f, int user_addr, const uint64 addr, int n, int
     if (user_addr) {
         char *buf = kmalloc(n + 1);
         if (buf == NULL) {
-            ext4_fseek(file, original_pos, SEEK_SET);
-            return -12;  // -ENOMEM
+            panic("vfs_ext_writeat: kalloc failed\n");
         }
         if (copyin(myproc()->pagetable, buf, addr, n) != 0) {
             kfree(buf);
@@ -447,7 +446,7 @@ int vfs_ext_lseek(struct file *f, int offset, int whence) {
 int vfs_ext_dirclose(struct file *f) {
     struct ext4_dir *dir = (struct ext4_dir *)f -> f_extfile;
     if (dir == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_dirclose: cannot get ext4 file\n");
     }
     int r = ext4_dir_close(dir);
     if (r != EOK) {
@@ -467,7 +466,7 @@ int vfs_ext_fclose(struct file *f) {
     //     return ext4_fremove(f->f_path);
     // }
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_close: cannot get ext4 file\n");
     }
     int r = ext4_fclose(file);
     if (r != EOK) {
@@ -952,11 +951,11 @@ ssize_t vfs_ext_readi(struct inode *self, int user_addr, uint64 addr, uint off, 
         char *buf = kmalloc(n + 1);
         uint64 mread = 0;
         if (buf == NULL) {
-            return -12;  // -ENOMEM
+            panic("vfs_ext_read: kalloc failed\n");
         }
-        r = ext4_fread(&file, buf, n, &bytesread);
+        r = ext4_fread(&file, kbuf, n, &bytesread);
         if (r != EOK) {
-            kfree(buf);
+            kfree(kbuf);
             return 0;
         }
 
@@ -1021,7 +1020,7 @@ int vfs_ext_faccessat(char *path, int mode) {
 int vfs_ext_ftruncate(struct file *f, int length) {
     struct ext4_file *file = (struct ext4_file *)f->f_extfile;
     if (file == NULL) {
-        return -22;  // -EINVAL
+        panic("vfs_ext_ftruncate: cannot get ext4 file\n");
     }
 
     // 调用 EXT4 的文件截断接口

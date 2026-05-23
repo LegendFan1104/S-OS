@@ -4,7 +4,6 @@
 #include "proc/trapframe.h"
 
 #define SIGNUM 64
-#define NSIG   64
 
 #define SIGHUP 1
 #define SIGINT 2
@@ -41,25 +40,12 @@
 #define SIGSYS 31
 #define SIGUNUSED 31
 
-// Signal flags for sigaction
-#define SA_NOCLDSTOP    0x00000001
-#define SA_NOCLDWAIT    0x00000002
-#define SA_SIGINFO      0x00000004
-#define SA_ONSTACK      0x08000000
-#define SA_RESTART      0x10000000
-#define SA_NODEFER      0x40000000
-#define SA_RESETHAND    0x80000000
+
 
 // Flags for sigprocmask
 #define SIG_BLOCK   0
 #define SIG_UNBLOCK 1
 #define SIG_SETMASK 2
-
-// Alternate signal stack flags
-#define SS_ONSTACK      1
-#define SS_DISABLE      2
-#define MINSIGSTKSZ     2048
-#define SIGSTKSZ        8192
 
 typedef void (*sighandler_t)(int);
 
@@ -74,33 +60,7 @@ struct sigset{
 
 typedef struct sigset sigset_t;
 
-// Alternate signal stack structure
-struct sigaltstack {
-    void *ss_sp;
-    int ss_flags;
-    size_t ss_size;
-};
-typedef struct sigaltstack stack_t;
 
-// siginfo_t for waitid
-struct siginfo {
-    int si_signo;
-    int si_code;
-    int si_pid;
-    int si_uid;
-    int si_status;
-    int si_utime;
-    int si_stime;
-};
-typedef struct siginfo siginfo_t;
-
-// idtype_t for waitid
-typedef enum {
-    P_ALL = 0,
-    P_PID = 1,
-    P_PGID = 2,
-    P_PIDFD = 3
-} idtype_t;
 
 struct sigaction {
     sighandler_t sa_handler;
@@ -131,8 +91,6 @@ void default_handle(struct proc *p, int signum);
 void sig_return();
 int sigprocmask(int how, sigset_t *set, sigset_t *oldset);
 int sigact_reg(int signum, struct sigaction *act, struct sigaction *oldact);
-int sigaltstack_impl(struct proc *p, struct sigaltstack *ss, struct sigaltstack *old_ss);
-int sigsuspend_impl(struct proc *p, sigset_t *mask);
 
 
 
