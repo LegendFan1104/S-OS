@@ -118,27 +118,12 @@ uint64 sys_getrandom(void) {
     argaddr(0, &ubuf);
     argint(1, &bufsize);
     // printf("%p %d\n", ubuf, bufsize);
-    
-    // Validate bufsize
-    if (bufsize < 0 || bufsize > 4096) {
-        return -22;  // -EINVAL
-    }
-    
-    if (bufsize == 0) {
-        return 0;
-    }
-    
     char *randombuf = kmalloc(bufsize);
-    if (!randombuf) {
-        return -12;  // -ENOMEM
-    }
-    
     for (int i=0;i<bufsize;i++) {
         randombuf[i] = rdtime() & 0xFF;
     }
     if (copyout(myproc()->pagetable, ubuf, (char*)randombuf, bufsize) < 0) {
-        kfree(randombuf);
-        return -14;  // -EFAULT
+        return -1;
     }
     kfree(randombuf);
 

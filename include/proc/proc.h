@@ -96,13 +96,6 @@ struct proc {
   int signal; // 等待的信号
   struct sighand *sig; // 信号处理相关
   struct signal_frame *sig_frame;
-  struct sigaltstack sigaltstack; // Alternate signal stack
-  sigset_t sigsuspend_mask;       // Saved mask for sigsuspend
-  int sigsuspend_active;          // Flag for sigsuspend state
-  
-  // Robust futex list
-  struct robust_list_head *robust_list;
-  size_t robust_list_len;
 
   void *chan2;                // Used for futex
 
@@ -111,7 +104,6 @@ struct proc {
 
   int uid;  // 用户ID
   int gid;  // 组ID
-  int pgid; // 进程组ID
 
   // 调度相关
   int sched_policy;           // 调度策略: SCHED_OTHER, SCHED_FIFO, SCHED_RR
@@ -122,15 +114,6 @@ struct proc {
 #define WNOHANG     0x01    // Don't block waiting
 #define WUNTRACED   0x02    // Report stopped children
 #define WCONTINUED  0x04    // Report continued children
-#define WNOWAIT     0x08    // Don't reap, just poll status
-
-// Siginfo codes for SIGCHLD
-#define CLD_EXITED  1       // Child has exited
-#define CLD_KILLED  2       // Child was killed
-#define CLD_DUMPED  3       // Child terminated abnormally
-#define CLD_TRAPPED 4       // Traced child has trapped
-#define CLD_STOPPED 5       // Child has stopped
-#define CLD_CONTINUED 6     // Stopped child has continued
 
 #define S_ISUID  04000  // set-user-ID bit
 #define S_ISGID  02000  // set-group-ID bit

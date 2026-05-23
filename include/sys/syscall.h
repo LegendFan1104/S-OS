@@ -8,7 +8,6 @@
 #define SYS_exit                93
 #define SYS_wait                3
 #define SYS_wait4               260
-#define SYS_waitid              95
 #define SYS_getppid             173
 #define SYS_getpid              172
 #define SYS_pipe2               59
@@ -55,8 +54,6 @@
 #define SYS_rt_sigprocmask  135
 #define SYS_rt_sigtimedwait 137
 #define SYS_rt_sigreturn    139
-#define SYS_sigaltstack     132
-#define SYS_sigsuspend      133
 
 
 //busybox
@@ -68,11 +65,8 @@
 #define SYS_fstatat  79
 #define SYS_exit_group 94
 #define SYS_set_robust_list 99
-#define SYS_get_robust_list 100
 #define SYS_gettid 178
 #define SYS_writev 66
-#define SYS_preadv 69
-#define SYS_pwritev 70
 #define SYS_prlimit64 261
 #define SYS_readlinkat 78
 #define SYS_getrandom 278
@@ -109,30 +103,6 @@
 #define SYS_symlinkat 36
 #define SYS_futex 98
 #define SYS_socket 198
-
-// epoll
-#define SYS_epoll_create1   20
-#define SYS_epoll_ctl       21
-#define SYS_epoll_pwait     22
-
-// eventfd
-#define SYS_eventfd2        19
-
-// timerfd
-#define SYS_timerfd_create  85
-#define SYS_timerfd_settime 86
-#define SYS_timerfd_gettime 87
-
-// inotify
-#define SYS_inotify_init1   26
-#define SYS_inotify_add_watch 27
-#define SYS_inotify_rm_watch 28
-
-// memfd
-#define SYS_memfd_create    279
-
-// signal
-#define SYS_rt_sigpending   127
 
 // Scheduling system calls
 #define SYS_sched_setscheduler  119

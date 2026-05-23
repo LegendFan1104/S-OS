@@ -92,7 +92,6 @@ uint64 unused() {
 extern uint64 sys_fork(void);
 extern uint64 sys_exit(void);
 extern uint64 sys_wait(void);
-extern uint64 sys_waitid(void);
 extern uint64 sys_read(void);
 extern uint64 sys_kill(void);
 extern uint64 sys_execve(void);
@@ -130,11 +129,11 @@ extern uint64 sys_uname(void);
 extern uint64 sys_nanosleep(void);
 extern uint64 sys_shutdown(void);
 extern uint64 sys_getppid(void);
+extern uint64 sys_times(void);
 extern uint64 sys_statx(void);
 extern uint64 sys_rt_sigaction(void);
 extern uint64 sys_rt_sigprocmask(void);
 extern uint64 sys_rt_sigtimedwait(void);
-extern uint64 sys_rt_sigpending(void);
 extern uint64 sys_kill_signal(void);
 extern uint64 sys_tkill(void);
 extern uint64 sys_tgkill(void);
@@ -146,7 +145,6 @@ extern uint64 sys_setuid(void);
 extern uint64 sys_exit_group(void);
 extern uint64 sys_gettid(void);
 extern uint64 sys_set_robust_list(void);
-extern uint64 sys_get_robust_list(void);
 extern uint64 sys_writev(void);
 extern uint64 sys_prlimit64(void);
 extern uint64 sys_readlinkat(void);
@@ -168,13 +166,10 @@ extern uint64 sys_readv(void);
 extern uint64 sys_clock_nanosleep(void);
 extern uint64 sys_getpgid(void);
 extern uint64 sys_setpgid(void);
-extern uint64 sys_readv(void);
+extern uint64 sys_geteuid(void);
 extern uint64 sys_writev(void);
-extern uint64 sys_preadv(void);
-extern uint64 sys_pwritev(void);
 extern uint64 sys_mprotect(void);
 extern uint64 sys_copy_file_range(void);
-extern uint64 sys_geteuid(void);
 extern uint64 sys_getegid(void);
 extern uint64 sys_ftruncate(void);
 extern uint64 sys_pread64(void);
@@ -183,19 +178,6 @@ extern uint64 sys_fchmodat(void);
 extern uint64 sys_symlinkat(void);
 extern uint64 sys_futex(void);
 extern uint64 sys_socket(void);
-extern uint64 sys_memfd_create(void);
-extern uint64 sys_inotify_init1(void);
-extern uint64 sys_inotify_add_watch(void);
-extern uint64 sys_inotify_rm_watch(void);
-extern uint64 sys_eventfd2(void);
-extern uint64 sys_timerfd_create(void);
-extern uint64 sys_timerfd_settime(void);
-extern uint64 sys_timerfd_gettime(void);
-extern uint64 sys_epoll_create1(void);
-extern uint64 sys_epoll_ctl(void);
-extern uint64 sys_epoll_pwait(void);
-extern uint64 sys_sigaltstack(void);
-extern uint64 sys_sigsuspend(void);
 
 // Scheduling system calls
 extern uint64 sys_sched_setscheduler(void);
@@ -242,7 +224,6 @@ static uint64 (*syscalls[])(void) = {
 [SYS_mmap]    sys_mmap,
 [SYS_munmap]  sys_munmap,
 [SYS_wait4]   sys_wait4,
-[SYS_waitid]  sys_waitid,
 [SYS_times]   sys_times,
 [SYS_gettimeofday] sys_gettimeofday,
 [SYS_sched_yield] sys_sched_yield,
@@ -254,9 +235,6 @@ static uint64 (*syscalls[])(void) = {
 [SYS_rt_sigaction] sys_rt_sigaction,
 [SYS_rt_sigprocmask] sys_rt_sigprocmask,
 [SYS_rt_sigtimedwait] sys_rt_sigtimedwait,
-[SYS_rt_sigpending] sys_rt_sigpending,
-[SYS_sigaltstack] sys_sigaltstack,
-[SYS_sigsuspend] sys_sigsuspend,
 [SYS_kill_signal] sys_kill_signal,
 [SYS_tkill] sys_tkill,
 [SYS_tgkill] sys_tgkill,
@@ -269,10 +247,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_exit_group] sys_exit_group,
 [SYS_gettid] sys_gettid,
 [SYS_set_robust_list] sys_set_robust_list,
-[SYS_get_robust_list] sys_get_robust_list,
 [SYS_writev] sys_writev,
-[SYS_preadv] sys_preadv,
-[SYS_pwritev] sys_pwritev,
 [SYS_readlinkat] sys_readlinkat,
 [SYS_prlimit64] sys_prlimit64,
 [SYS_getrandom] sys_getrandom,
@@ -305,17 +280,6 @@ static uint64 (*syscalls[])(void) = {
 [SYS_symlinkat] sys_symlinkat,
 [SYS_futex] sys_futex,
 [SYS_socket] sys_socket,
-[SYS_memfd_create] sys_memfd_create,
-[SYS_inotify_init1] sys_inotify_init1,
-[SYS_inotify_add_watch] sys_inotify_add_watch,
-[SYS_inotify_rm_watch] sys_inotify_rm_watch,
-[SYS_eventfd2] sys_eventfd2,
-[SYS_timerfd_create] sys_timerfd_create,
-[SYS_timerfd_settime] sys_timerfd_settime,
-[SYS_timerfd_gettime] sys_timerfd_gettime,
-[SYS_epoll_create1] sys_epoll_create1,
-[SYS_epoll_ctl] sys_epoll_ctl,
-[SYS_epoll_pwait] sys_epoll_pwait,
 [SYS_sched_setscheduler] sys_sched_setscheduler,
 [SYS_sched_setparam] sys_sched_setparam,
 [SYS_sched_getparam] sys_sched_getparam,
