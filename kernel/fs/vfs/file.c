@@ -206,6 +206,17 @@ fileread(struct file *f, uint64 addr, int n)
         int len = n < 4 ? n : 4;
         copyout(myproc()->pagetable, addr, buf, len);
         return len;
+    } else if (f->f_type == FD_EVENTFD) {
+        return eventfd_read(f, addr, n);
+    } else if (f->f_type == FD_TIMERFD) {
+        return timerfd_read(f, addr, n);
+    } else if (f->f_type == FD_INOTIFY) {
+        return inotify_read(f, addr, n);
+    } else if (f->f_type == FD_MEMFD) {
+        return memfd_read(f, addr, n);
+    } else if (f->f_type == FD_EPOLL) {
+        // epoll doesn't support read
+        return -22;  // -EINVAL
     } else{
         panic("fileread");
     }
@@ -254,6 +265,13 @@ filewrite(struct file *f, uint64 addr, int n)
         // /dev/cpu_dma_latency - 接受写入但不实际处理
         // 写入0表示禁止CPU进入深度睡眠状态
         ret = n;
+    } else if (f->f_type == FD_EVENTFD) {
+        return eventfd_write(f, addr, n);
+    } else if (f->f_type == FD_MEMFD) {
+        return memfd_write(f, addr, n);
+    } else if (f->f_type == FD_TIMERFD || f->f_type == FD_INOTIFY || f->f_type == FD_EPOLL) {
+        // These don't support write
+        return -22;  // -EINVAL
     } else {
         panic("filewrite");
     }

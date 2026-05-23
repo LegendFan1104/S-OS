@@ -130,7 +130,6 @@ extern uint64 sys_uname(void);
 extern uint64 sys_nanosleep(void);
 extern uint64 sys_shutdown(void);
 extern uint64 sys_getppid(void);
-extern uint64 sys_times(void);
 extern uint64 sys_statx(void);
 extern uint64 sys_rt_sigaction(void);
 extern uint64 sys_rt_sigprocmask(void);

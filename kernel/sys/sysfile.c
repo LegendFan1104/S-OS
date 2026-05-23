@@ -163,9 +163,14 @@ uint64 sys_readv(void) {
     for (int i=0; i != iovcnt; i++) {
       uchar *buf_tmp;
       if ((buf_tmp = kmalloc(vec->iov_len)) == 0) {
-        panic("readv: kmalloc error");
+        kfree(buf);
+        return -12;  // -ENOMEM
       }
-      copyout(p->pagetable, (uint64)vec->iov_base, (char*)buf_tmp, vec->iov_len);
+      if (copyout(p->pagetable, (uint64)vec->iov_base, (char*)buf_tmp, vec->iov_len) < 0) {
+        kfree(buf_tmp);
+        kfree(buf);
+        return -14;  // -EFAULT
+      }
       kfree(buf_tmp);
       nread += vec->iov_len;
       vec++;
@@ -1003,8 +1008,8 @@ uint64 sys_ioctl(void) {
         ws.ws_row = 24;
         if (copyout(myproc()->pagetable, arg, (char*)&ws, sizeof(ws)) < 0)
           return -1;
+        return 0;
       }
-      break;
     default:
       return 0;
   }
@@ -1102,7 +1107,13 @@ uint64 sys_ppoll(void) {
   }
 
   uint64 timeout = tsaddr ? ts2ticks(&ts) : -1;
+  if (pfd.fd < 0 || pfd.fd >= NOFILE)
+    return -9;  // -EBADF
+    
   struct file *f = p->ofile[pfd.fd];
+  if (!f)
+    return -9;  // -EBADF
+    
   while (1) {
     switch (f->f_type) {
       case FD_PIPE:
@@ -1114,8 +1125,13 @@ uint64 sys_ppoll(void) {
           }
         }
         break;
+      case FD_REG:
+      case FD_SYSFILE:
+        // Regular files are always readable/writable
+        return 1;
       default:
-        panic("ppoll: No type error");
+        // For other file types, assume ready
+        return 1;
     }
 
     if (timeout == -1) {
@@ -1147,7 +1163,10 @@ uint64 sys_sendfile(void) {
   void *buf = kmalloc(count);
 
   if (poff) {
-    copyin(myproc()->pagetable, (char*)&offset, poff, sizeof(offset));
+    if (copyin(myproc()->pagetable, (char*)&offset, poff, sizeof(offset)) < 0) {
+      kfree(buf);
+      return -14;  // -EFAULT
+    }
   } else {
     offset = in_f->f_pos;
   }
@@ -1317,7 +1336,13 @@ ssize_t sys_copy_file_range(void)
   ssize_t ret;
 
   if(argfd(0, &fd_in, &f_in) < 0 || argfd(2, &fd_out, &f_out) < 0){
-    return -1;
+    return -9;  // -EBADF
+  }
+
+  // Only support regular files
+  if ((f_in->f_type != FD_REG && f_in->f_type != FD_SYSFILE) ||
+      (f_out->f_type != FD_REG && f_out->f_type != FD_SYSFILE)) {
+    return -22;  // -EINVAL
   }
 
   argint(5, (int*)&flags);
@@ -1329,20 +1354,18 @@ ssize_t sys_copy_file_range(void)
 
   if (in_ptr) {
     if (copyin(p->pagetable, (char*)&off_in, in_ptr, sizeof(off_in)) < 0) {
-      printf("Can't read off_in");
-      return -1;
+      return -14;  // -EFAULT
     }
   }
 
   if (out_ptr) {
     if (copyin(p->pagetable, (char*)&off_out, out_ptr, sizeof(off_out)) < 0) {
-      printf("Can't read off_out");
-      return -1;
+      return -14;  // -EFAULT
     }
   }
   // printf("copy_file_range : %d %d %d %d %d\n", fd_in, off_in, fd_out, off_out, len);
   if(f_in->removed || f_out->removed) {
-    return -1;
+    return -9;  // -EBADF
   }
   // 直接调用vfs_ext4_copy_file_range
   // printf("off:%d\n", f_in->f_pos);
@@ -1356,10 +1379,15 @@ sys_ftruncate(void)
 {
   struct file *f;
   int pos;
-  argfd(0, 0, &f);
+  if (argfd(0, 0, &f) < 0)
+    return -9;  // -EBADF
   argint(1, &pos);
 
-  vfs_ext_ftruncate(f, pos);
+  // Only support regular files
+  if (f->f_type != FD_REG && f->f_type != FD_SYSFILE)
+    return -22;  // -EINVAL
+
+  return vfs_ext_ftruncate(f, pos);
 }
 
 int sys_splice(void) {
@@ -1372,7 +1400,7 @@ int sys_splice(void) {
   int flags;
 
   if (argfd(0, &fd_in, &f_in) < 0 || argfd(2, &fd_out, &f_out) < 0) {
-    return -1;
+    return -9;  // -EBADF
   }
 
   argaddr(1, &in_ptr);
@@ -1381,12 +1409,24 @@ int sys_splice(void) {
   argint(5, &flags);
   // printf("%d %d %d %d\n", fd_in, f_in->f_type, fd_out, f_out->f_type);
 
+  // Only support pipe <-> regular file splice
+  if (!((f_in->f_type == FD_PIPE && (f_out->f_type == FD_REG || f_out->f_type == FD_SYSFILE)) ||
+        ((f_in->f_type == FD_REG || f_in->f_type == FD_SYSFILE) && f_out->f_type == FD_PIPE))) {
+    return -22;  // -EINVAL
+  }
+
   if (f_in -> f_type == FD_PIPE) {
     char *buf = kmalloc(len + 2);
+    if (!buf)
+      return -12;  // -ENOMEM
     int byteread = piperead_kernel(f_in->f_pipe, buf, len);
-    copyin(myproc()->pagetable, (char*)&off_out, out_ptr, sizeof(off_out));
+    if (copyin(myproc()->pagetable, (char*)&off_out, out_ptr, sizeof(off_out)) < 0) {
+      kfree(buf);
+      return -14;  // -EFAULT
+    }
     if (off_out < 0) {
-      return -1;
+      kfree(buf);
+      return -22;  // -EINVAL
     }
     int bytewrite = vfs_ext_writeat(f_out, 0, (uint64)buf, byteread, off_out);
     off_out += bytewrite;
@@ -1395,13 +1435,25 @@ int sys_splice(void) {
     return bytewrite;
   } else {
     char *buf = kmalloc(len + 2);
+    if (!buf)
+      return -12;  // -ENOMEM
     // printf("%p\n", in_ptr);
-    copyin(myproc()->pagetable, (char*)&off_in, in_ptr, sizeof(off_in));
+    if (copyin(myproc()->pagetable, (char*)&off_in, in_ptr, sizeof(off_in)) < 0) {
+      kfree(buf);
+      return -14;  // -EFAULT
+    }
     // printf("%d\n", off_in);
     if (off_in < 0) {
-      return -1;
+      kfree(buf);
+      return -22;  // -EINVAL
     }
-    if (off_in > ((struct ext4_file*)f_in->f_extfile)->fsize) {
+    struct ext4_file *ext4_in = (struct ext4_file*)f_in->f_extfile;
+    if (!ext4_in) {
+      kfree(buf);
+      return -22;  // -EINVAL
+    }
+    if (off_in > ext4_in->fsize) {
+      kfree(buf);
       return 0;
     }
     int byteread = vfs_ext_readat(f_in, 0, (uint64)buf, len, off_in);
@@ -1424,7 +1476,7 @@ uint64 sys_symlinkat(void) {
   int dirfd;
   argstr(0, target, MAXPATH);
   argint(1, &dirfd);
-  argstr(1, path, MAXPATH);
+  argstr(2, path, MAXPATH);
 
   const char *dirpath = (dirfd == AT_FDCWD) ? myproc() -> cwd.path : myproc() -> ofile[dirfd]->f_path;
   char absolute_path[MAXPATH] = {0};
