@@ -10,7 +10,6 @@ if(RISCV)
             ${CMAKE_CURRENT_SOURCE_DIR}/riscv/swtch.S
             ${CMAKE_CURRENT_SOURCE_DIR}/signal.c
             ${CMAKE_CURRENT_SOURCE_DIR}/socket.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/futex.c
             ${CMAKE_CURRENT_SOURCE_DIR}/riscv/sig_trampoline.S
             PARENT_SCOPE
     )
@@ -25,7 +24,6 @@ elseif(LOONGARCH)
             ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/swtch.S
             ${CMAKE_CURRENT_SOURCE_DIR}/signal.c
             ${CMAKE_CURRENT_SOURCE_DIR}/socket.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/futex.c
             ${CMAKE_CURRENT_SOURCE_DIR}/loongarch/sig_trampoline.S
             PARENT_SCOPE
     )
