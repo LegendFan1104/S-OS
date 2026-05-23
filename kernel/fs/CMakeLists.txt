@@ -6,11 +6,6 @@ if(RISCV)
             ${ext4_sources}
             ${vfs_sources}
             ${CMAKE_CURRENT_SOURCE_DIR}/procfs.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/epoll.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/eventfd.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/timerfd.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/inotify.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/memfd.c
             PARENT_SCOPE
     )
 elseif (LOONGARCH)
@@ -18,11 +13,6 @@ elseif (LOONGARCH)
             ${ext4_sources}
             ${vfs_sources}
             ${CMAKE_CURRENT_SOURCE_DIR}/procfs.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/epoll.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/eventfd.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/timerfd.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/inotify.c
-            ${CMAKE_CURRENT_SOURCE_DIR}/memfd.c
             PARENT_SCOPE
     )
 endif ()

@@ -163,14 +163,9 @@ uint64 sys_readv(void) {
     for (int i=0; i != iovcnt; i++) {
       uchar *buf_tmp;
       if ((buf_tmp = kmalloc(vec->iov_len)) == 0) {
-        kfree(buf);
-        return -12;  // -ENOMEM
+        panic("readv: kmalloc error");
       }
-      if (copyout(p->pagetable, (uint64)vec->iov_base, (char*)buf_tmp, vec->iov_len) < 0) {
-        kfree(buf_tmp);
-        kfree(buf);
-        return -14;  // -EFAULT
-      }
+      copyout(p->pagetable, (uint64)vec->iov_base, (char*)buf_tmp, vec->iov_len);
       kfree(buf_tmp);
       nread += vec->iov_len;
       vec++;
@@ -229,85 +224,6 @@ uint64 sys_writev(void) {
   }
   // printf("%d\n", writebytes);
   return writebytes;
-}
-
-// preadv - read from file at given offset into multiple buffers
-uint64 sys_preadv(void) {
-  struct file *f;
-  int fd, iovcnt;
-  uint64 iov_ptr;
-  long offset;
-  struct iovec iov;
-  int nread = 0;
-
-  argint(0, &fd);
-  argaddr(1, &iov_ptr);
-  argint(2, &iovcnt);
-  argint(3, (int*)&offset);
-
-  if (argfd(0, 0, &f) < 0) {
-    return -1;
-  }
-
-  struct proc *p = myproc();
-
-  for (int i = 0; i < iovcnt; i++) {
-    if (copyin(p->pagetable, (char*)(&iov), (uint64)(iov_ptr + i * sizeof(struct iovec)), sizeof(struct iovec)) < 0) {
-      return -1;
-    }
-
-    // Read at offset
-    int bytes = get_fops()->readat(f, (uint64)iov.iov_base, iov.iov_len, offset);
-    if (bytes < 0) {
-      return nread > 0 ? nread : -1;
-    }
-    nread += bytes;
-    offset += bytes;
-
-    // Stop if we didn't read full buffer (EOF)
-    if (bytes < iov.iov_len)
-      break;
-  }
-
-  return nread;
-}
-
-// pwritev - write to file at given offset from multiple buffers
-uint64 sys_pwritev(void) {
-  struct file *f;
-  int fd, iovcnt;
-  uint64 iov_ptr;
-  long offset;
-  struct iovec iov;
-  int nwritten = 0;
-
-  argint(0, &fd);
-  argaddr(1, &iov_ptr);
-  argint(2, &iovcnt);
-  argint(3, (int*)&offset);
-
-  if (argfd(0, 0, &f) < 0) {
-    return -1;
-  }
-
-  struct proc *p = myproc();
-
-  for (int i = 0; i < iovcnt; i++) {
-    if (copyin(p->pagetable, (char*)(&iov), (uint64)(iov_ptr + i * sizeof(struct iovec)), sizeof(struct iovec)) < 0) {
-      return -1;
-    }
-
-    // Write at offset (using readat as generic offset-based operation)
-    // For actual implementation, you'd need a writeat function
-    int bytes = get_fops()->write(f, (uint64)iov.iov_base, iov.iov_len);
-    if (bytes < 0) {
-      return nwritten > 0 ? nwritten : -1;
-    }
-    nwritten += bytes;
-    offset += bytes;
-  }
-
-  return nwritten;
 }
 
 uint64
@@ -1008,8 +924,8 @@ uint64 sys_ioctl(void) {
         ws.ws_row = 24;
         if (copyout(myproc()->pagetable, arg, (char*)&ws, sizeof(ws)) < 0)
           return -1;
-        return 0;
       }
+      break;
     default:
       return 0;
   }
@@ -1107,13 +1023,7 @@ uint64 sys_ppoll(void) {
   }
 
   uint64 timeout = tsaddr ? ts2ticks(&ts) : -1;
-  if (pfd.fd < 0 || pfd.fd >= NOFILE)
-    return -9;  // -EBADF
-    
   struct file *f = p->ofile[pfd.fd];
-  if (!f)
-    return -9;  // -EBADF
-    
   while (1) {
     switch (f->f_type) {
       case FD_PIPE:
@@ -1125,13 +1035,8 @@ uint64 sys_ppoll(void) {
           }
         }
         break;
-      case FD_REG:
-      case FD_SYSFILE:
-        // Regular files are always readable/writable
-        return 1;
       default:
-        // For other file types, assume ready
-        return 1;
+        panic("ppoll: No type error");
     }
 
     if (timeout == -1) {
@@ -1163,10 +1068,7 @@ uint64 sys_sendfile(void) {
   void *buf = kmalloc(count);
 
   if (poff) {
-    if (copyin(myproc()->pagetable, (char*)&offset, poff, sizeof(offset)) < 0) {
-      kfree(buf);
-      return -14;  // -EFAULT
-    }
+    copyin(myproc()->pagetable, (char*)&offset, poff, sizeof(offset));
   } else {
     offset = in_f->f_pos;
   }
@@ -1336,13 +1238,7 @@ ssize_t sys_copy_file_range(void)
   ssize_t ret;
 
   if(argfd(0, &fd_in, &f_in) < 0 || argfd(2, &fd_out, &f_out) < 0){
-    return -9;  // -EBADF
-  }
-
-  // Only support regular files
-  if ((f_in->f_type != FD_REG && f_in->f_type != FD_SYSFILE) ||
-      (f_out->f_type != FD_REG && f_out->f_type != FD_SYSFILE)) {
-    return -22;  // -EINVAL
+    return -1;
   }
 
   argint(5, (int*)&flags);
@@ -1354,18 +1250,20 @@ ssize_t sys_copy_file_range(void)
 
   if (in_ptr) {
     if (copyin(p->pagetable, (char*)&off_in, in_ptr, sizeof(off_in)) < 0) {
-      return -14;  // -EFAULT
+      printf("Can't read off_in");
+      return -1;
     }
   }
 
   if (out_ptr) {
     if (copyin(p->pagetable, (char*)&off_out, out_ptr, sizeof(off_out)) < 0) {
-      return -14;  // -EFAULT
+      printf("Can't read off_out");
+      return -1;
     }
   }
   // printf("copy_file_range : %d %d %d %d %d\n", fd_in, off_in, fd_out, off_out, len);
   if(f_in->removed || f_out->removed) {
-    return -9;  // -EBADF
+    return -1;
   }
   // 直接调用vfs_ext4_copy_file_range
   // printf("off:%d\n", f_in->f_pos);
@@ -1379,15 +1277,10 @@ sys_ftruncate(void)
 {
   struct file *f;
   int pos;
-  if (argfd(0, 0, &f) < 0)
-    return -9;  // -EBADF
+  argfd(0, 0, &f);
   argint(1, &pos);
 
-  // Only support regular files
-  if (f->f_type != FD_REG && f->f_type != FD_SYSFILE)
-    return -22;  // -EINVAL
-
-  return vfs_ext_ftruncate(f, pos);
+  vfs_ext_ftruncate(f, pos);
 }
 
 int sys_splice(void) {
@@ -1400,7 +1293,7 @@ int sys_splice(void) {
   int flags;
 
   if (argfd(0, &fd_in, &f_in) < 0 || argfd(2, &fd_out, &f_out) < 0) {
-    return -9;  // -EBADF
+    return -1;
   }
 
   argaddr(1, &in_ptr);
@@ -1409,24 +1302,12 @@ int sys_splice(void) {
   argint(5, &flags);
   // printf("%d %d %d %d\n", fd_in, f_in->f_type, fd_out, f_out->f_type);
 
-  // Only support pipe <-> regular file splice
-  if (!((f_in->f_type == FD_PIPE && (f_out->f_type == FD_REG || f_out->f_type == FD_SYSFILE)) ||
-        ((f_in->f_type == FD_REG || f_in->f_type == FD_SYSFILE) && f_out->f_type == FD_PIPE))) {
-    return -22;  // -EINVAL
-  }
-
   if (f_in -> f_type == FD_PIPE) {
     char *buf = kmalloc(len + 2);
-    if (!buf)
-      return -12;  // -ENOMEM
     int byteread = piperead_kernel(f_in->f_pipe, buf, len);
-    if (copyin(myproc()->pagetable, (char*)&off_out, out_ptr, sizeof(off_out)) < 0) {
-      kfree(buf);
-      return -14;  // -EFAULT
-    }
+    copyin(myproc()->pagetable, (char*)&off_out, out_ptr, sizeof(off_out));
     if (off_out < 0) {
-      kfree(buf);
-      return -22;  // -EINVAL
+      return -1;
     }
     int bytewrite = vfs_ext_writeat(f_out, 0, (uint64)buf, byteread, off_out);
     off_out += bytewrite;
@@ -1435,25 +1316,13 @@ int sys_splice(void) {
     return bytewrite;
   } else {
     char *buf = kmalloc(len + 2);
-    if (!buf)
-      return -12;  // -ENOMEM
     // printf("%p\n", in_ptr);
-    if (copyin(myproc()->pagetable, (char*)&off_in, in_ptr, sizeof(off_in)) < 0) {
-      kfree(buf);
-      return -14;  // -EFAULT
-    }
+    copyin(myproc()->pagetable, (char*)&off_in, in_ptr, sizeof(off_in));
     // printf("%d\n", off_in);
     if (off_in < 0) {
-      kfree(buf);
-      return -22;  // -EINVAL
+      return -1;
     }
-    struct ext4_file *ext4_in = (struct ext4_file*)f_in->f_extfile;
-    if (!ext4_in) {
-      kfree(buf);
-      return -22;  // -EINVAL
-    }
-    if (off_in > ext4_in->fsize) {
-      kfree(buf);
+    if (off_in > ((struct ext4_file*)f_in->f_extfile)->fsize) {
       return 0;
     }
     int byteread = vfs_ext_readat(f_in, 0, (uint64)buf, len, off_in);
@@ -1476,7 +1345,7 @@ uint64 sys_symlinkat(void) {
   int dirfd;
   argstr(0, target, MAXPATH);
   argint(1, &dirfd);
-  argstr(2, path, MAXPATH);
+  argstr(1, path, MAXPATH);
 
   const char *dirpath = (dirfd == AT_FDCWD) ? myproc() -> cwd.path : myproc() -> ofile[dirfd]->f_path;
   char absolute_path[MAXPATH] = {0};
@@ -1499,180 +1368,6 @@ uint64 sys_socket(void) {
     return -1;
   }
   return fd;
-}
-
-// memfd system calls
-#include "fs/memfd.h"
-
-uint64 sys_memfd_create(void) {
-  char name[256];
-  unsigned int flags;
-
-  if (argstr(0, name, 256) < 0)
-    return -14;  // -EFAULT
-
-  argint(1, (int*)&flags);
-  return memfd_create(name, flags);
-}
-
-// inotify system calls
-#include "fs/inotify.h"
-
-uint64 sys_inotify_init1(void) {
-  int flags;
-  argint(0, &flags);
-  return inotify_init1(flags);
-}
-
-uint64 sys_inotify_add_watch(void) {
-  int fd;
-  uint64 pathname_addr;
-  uint32_t mask;
-  char pathname[MAXPATH];
-  struct proc *p = myproc();
-
-  argint(0, &fd);
-  argaddr(1, &pathname_addr);
-  argint(2, (int*)&mask);
-
-  if (argstr(1, pathname, MAXPATH) < 0)
-    return -14;  // -EFAULT
-
-  return inotify_add_watch(fd, pathname, mask);
-}
-
-uint64 sys_inotify_rm_watch(void) {
-  int fd, wd;
-  argint(0, &fd);
-  argint(1, &wd);
-  return inotify_rm_watch(fd, wd);
-}
-
-// eventfd system calls
-#include "fs/eventfd.h"
-
-uint64 sys_eventfd2(void) {
-  unsigned int initval;
-  int flags;
-  argint(0, (int*)&initval);
-  argint(1, &flags);
-  return eventfd2(initval, flags);
-}
-
-// timerfd system calls
-#include "fs/timerfd.h"
-
-uint64 sys_timerfd_create(void) {
-  int clockid, flags;
-  argint(0, &clockid);
-  argint(1, &flags);
-  return timerfd_create(clockid, flags);
-}
-
-uint64 sys_timerfd_settime(void) {
-  int fd, flags;
-  uint64 new_value_addr, old_value_addr;
-  struct itimerspec new_value, old_value;
-  struct proc *p = myproc();
-
-  argint(0, &fd);
-  argint(1, &flags);
-  argaddr(2, &new_value_addr);
-  argaddr(3, &old_value_addr);
-
-  if (copyin(p->pagetable, (char*)&new_value, new_value_addr, sizeof(new_value)) < 0)
-    return -14;  // -EFAULT
-
-  int ret = timerfd_settime(fd, flags, &new_value, old_value_addr ? &old_value : NULL);
-
-  if (ret == 0 && old_value_addr) {
-    if (copyout(p->pagetable, old_value_addr, (char*)&old_value, sizeof(old_value)) < 0)
-      return -14;  // -EFAULT
-  }
-
-  return ret;
-}
-
-uint64 sys_timerfd_gettime(void) {
-  int fd;
-  uint64 curr_value_addr;
-  struct itimerspec curr_value;
-  struct proc *p = myproc();
-
-  argint(0, &fd);
-  argaddr(1, &curr_value_addr);
-
-  int ret = timerfd_gettime(fd, &curr_value);
-
-  if (ret == 0) {
-    if (copyout(p->pagetable, curr_value_addr, (char*)&curr_value, sizeof(curr_value)) < 0)
-      return -14;  // -EFAULT
-  }
-
-  return ret;
-}
-
-// epoll system calls
-#include "fs/epoll.h"
-
-uint64 sys_epoll_create1(void) {
-  int flags;
-  argint(0, &flags);
-  return epoll_create1(flags);
-}
-
-uint64 sys_epoll_ctl(void) {
-  int epfd, op, fd;
-  uint64 event_addr;
-  struct epoll_event event;
-  struct proc *p = myproc();
-
-  argint(0, &epfd);
-  argint(1, &op);
-  argint(2, &fd);
-  argaddr(3, &event_addr);
-
-  if (event_addr) {
-    if (copyin(p->pagetable, (char*)&event, event_addr, sizeof(event)) < 0)
-      return -14;  // -EFAULT
-  }
-
-  return epoll_ctl(epfd, op, fd, event_addr ? &event : NULL);
-}
-
-uint64 sys_epoll_pwait(void) {
-  int epfd, maxevents, timeout;
-  uint64 events_addr, sigmask_addr;
-  sigset_t sigmask;
-  struct proc *p = myproc();
-
-  argint(0, &epfd);
-  argaddr(1, &events_addr);
-  argint(2, &maxevents);
-  argint(3, &timeout);
-  argaddr(4, &sigmask_addr);
-
-  if (sigmask_addr) {
-    if (copyin(p->pagetable, (char*)&sigmask, sigmask_addr, sizeof(sigmask)) < 0)
-      return -14;  // -EFAULT
-  }
-
-  struct epoll_event *events = (struct epoll_event *)kalloc();
-  if (!events)
-    return -12;  // -ENOMEM
-
-  int ret = epoll_pwait(epfd, events, maxevents, timeout, sigmask_addr ? &sigmask : NULL);
-
-  if (ret > 0) {
-    int copy_size = ret * sizeof(struct epoll_event);
-    if (copyout(p->pagetable, events_addr, (char*)events, copy_size) < 0) {
-      kfree((void*)events);
-      return -14;  // -EFAULT
-    }
-  }
-
-  kfree((void*)events);
-  return ret;
 }
 
 

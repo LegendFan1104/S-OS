@@ -89,65 +89,6 @@ uint64 sys_tgkill(void) {
     return 0;
 }
 
-uint64 sys_sigaltstack(void) {
-    uint64 ss_addr, old_ss_addr;
-    argaddr(0, &ss_addr);
-    argaddr(1, &old_ss_addr);
-    
-    struct proc *p = myproc();
-    struct sigaltstack ss, old_ss;
-    
-    if (ss_addr) {
-        if (copyin(p->pagetable, (char*)&ss, ss_addr, sizeof(ss)) < 0)
-            return -14;  // -EFAULT
-    }
-    
-    int ret = sigaltstack_impl(p, ss_addr ? &ss : NULL, old_ss_addr ? &old_ss : NULL);
-    if (ret < 0)
-        return ret;
-    
-    if (old_ss_addr) {
-        if (copyout(p->pagetable, old_ss_addr, (char*)&old_ss, sizeof(old_ss)) < 0)
-            return -14;  // -EFAULT
-    }
-    
-    return 0;
-}
-
-uint64 sys_sigsuspend(void) {
-    uint64 mask_addr;
-    argaddr(0, &mask_addr);
-    
-    struct proc *p = myproc();
-    sigset_t mask;
-    
-    if (copyin(p->pagetable, (char*)&mask, mask_addr, sizeof(mask)) < 0)
-        return -14;  // -EFAULT
-    
-    return sigsuspend_impl(p, &mask);
-}
-
-uint64 sys_rt_sigpending(void) {
-    uint64 set_addr;
-    argaddr(0, &set_addr);
-    
-    struct proc *p = myproc();
-    sigset_t pending;
-    
-    // Get pending signals (simplified - in real impl would check signal queue)
-    // p->signal is an int representing the pending signal number
-    // Convert it to a sigset_t
-    pending.val = 0;
-    if (p->signal > 0 && p->signal <= 64) {
-        pending.val = (1UL << (p->signal - 1));
-    }
-    
-    if (copyout(p->pagetable, set_addr, (char*)&pending, sizeof(pending)) < 0)
-        return -14;  // -EFAULT
-    
-    return 0;
-}
-
 
 
 
