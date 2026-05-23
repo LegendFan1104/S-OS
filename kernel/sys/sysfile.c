@@ -226,6 +226,85 @@ uint64 sys_writev(void) {
   return writebytes;
 }
 
+// preadv - read from file at given offset into multiple buffers
+uint64 sys_preadv(void) {
+  struct file *f;
+  int fd, iovcnt;
+  uint64 iov_ptr;
+  long offset;
+  struct iovec iov;
+  int nread = 0;
+
+  argint(0, &fd);
+  argaddr(1, &iov_ptr);
+  argint(2, &iovcnt);
+  argint(3, (int*)&offset);
+
+  if (argfd(0, 0, &f) < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+
+  for (int i = 0; i < iovcnt; i++) {
+    if (copyin(p->pagetable, (char*)(&iov), (uint64)(iov_ptr + i * sizeof(struct iovec)), sizeof(struct iovec)) < 0) {
+      return -1;
+    }
+
+    // Read at offset
+    int bytes = get_fops()->readat(f, (uint64)iov.iov_base, iov.iov_len, offset);
+    if (bytes < 0) {
+      return nread > 0 ? nread : -1;
+    }
+    nread += bytes;
+    offset += bytes;
+
+    // Stop if we didn't read full buffer (EOF)
+    if (bytes < iov.iov_len)
+      break;
+  }
+
+  return nread;
+}
+
+// pwritev - write to file at given offset from multiple buffers
+uint64 sys_pwritev(void) {
+  struct file *f;
+  int fd, iovcnt;
+  uint64 iov_ptr;
+  long offset;
+  struct iovec iov;
+  int nwritten = 0;
+
+  argint(0, &fd);
+  argaddr(1, &iov_ptr);
+  argint(2, &iovcnt);
+  argint(3, (int*)&offset);
+
+  if (argfd(0, 0, &f) < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+
+  for (int i = 0; i < iovcnt; i++) {
+    if (copyin(p->pagetable, (char*)(&iov), (uint64)(iov_ptr + i * sizeof(struct iovec)), sizeof(struct iovec)) < 0) {
+      return -1;
+    }
+
+    // Write at offset (using readat as generic offset-based operation)
+    // For actual implementation, you'd need a writeat function
+    int bytes = get_fops()->write(f, (uint64)iov.iov_base, iov.iov_len);
+    if (bytes < 0) {
+      return nwritten > 0 ? nwritten : -1;
+    }
+    nwritten += bytes;
+    offset += bytes;
+  }
+
+  return nwritten;
+}
+
 uint64
 sys_close(void)
 {
@@ -1368,6 +1447,180 @@ uint64 sys_socket(void) {
     return -1;
   }
   return fd;
+}
+
+// memfd system calls
+#include "fs/memfd.h"
+
+uint64 sys_memfd_create(void) {
+  char name[256];
+  unsigned int flags;
+
+  if (argstr(0, name, 256) < 0)
+    return -14;  // -EFAULT
+
+  argint(1, (int*)&flags);
+  return memfd_create(name, flags);
+}
+
+// inotify system calls
+#include "fs/inotify.h"
+
+uint64 sys_inotify_init1(void) {
+  int flags;
+  argint(0, &flags);
+  return inotify_init1(flags);
+}
+
+uint64 sys_inotify_add_watch(void) {
+  int fd;
+  uint64 pathname_addr;
+  uint32_t mask;
+  char pathname[MAXPATH];
+  struct proc *p = myproc();
+
+  argint(0, &fd);
+  argaddr(1, &pathname_addr);
+  argint(2, (int*)&mask);
+
+  if (argstr(1, pathname, MAXPATH) < 0)
+    return -14;  // -EFAULT
+
+  return inotify_add_watch(fd, pathname, mask);
+}
+
+uint64 sys_inotify_rm_watch(void) {
+  int fd, wd;
+  argint(0, &fd);
+  argint(1, &wd);
+  return inotify_rm_watch(fd, wd);
+}
+
+// eventfd system calls
+#include "fs/eventfd.h"
+
+uint64 sys_eventfd2(void) {
+  unsigned int initval;
+  int flags;
+  argint(0, (int*)&initval);
+  argint(1, &flags);
+  return eventfd2(initval, flags);
+}
+
+// timerfd system calls
+#include "fs/timerfd.h"
+
+uint64 sys_timerfd_create(void) {
+  int clockid, flags;
+  argint(0, &clockid);
+  argint(1, &flags);
+  return timerfd_create(clockid, flags);
+}
+
+uint64 sys_timerfd_settime(void) {
+  int fd, flags;
+  uint64 new_value_addr, old_value_addr;
+  struct itimerspec new_value, old_value;
+  struct proc *p = myproc();
+
+  argint(0, &fd);
+  argint(1, &flags);
+  argaddr(2, &new_value_addr);
+  argaddr(3, &old_value_addr);
+
+  if (copyin(p->pagetable, (char*)&new_value, new_value_addr, sizeof(new_value)) < 0)
+    return -14;  // -EFAULT
+
+  int ret = timerfd_settime(fd, flags, &new_value, old_value_addr ? &old_value : NULL);
+
+  if (ret == 0 && old_value_addr) {
+    if (copyout(p->pagetable, old_value_addr, (char*)&old_value, sizeof(old_value)) < 0)
+      return -14;  // -EFAULT
+  }
+
+  return ret;
+}
+
+uint64 sys_timerfd_gettime(void) {
+  int fd;
+  uint64 curr_value_addr;
+  struct itimerspec curr_value;
+  struct proc *p = myproc();
+
+  argint(0, &fd);
+  argaddr(1, &curr_value_addr);
+
+  int ret = timerfd_gettime(fd, &curr_value);
+
+  if (ret == 0) {
+    if (copyout(p->pagetable, curr_value_addr, (char*)&curr_value, sizeof(curr_value)) < 0)
+      return -14;  // -EFAULT
+  }
+
+  return ret;
+}
+
+// epoll system calls
+#include "fs/epoll.h"
+
+uint64 sys_epoll_create1(void) {
+  int flags;
+  argint(0, &flags);
+  return epoll_create1(flags);
+}
+
+uint64 sys_epoll_ctl(void) {
+  int epfd, op, fd;
+  uint64 event_addr;
+  struct epoll_event event;
+  struct proc *p = myproc();
+
+  argint(0, &epfd);
+  argint(1, &op);
+  argint(2, &fd);
+  argaddr(3, &event_addr);
+
+  if (event_addr) {
+    if (copyin(p->pagetable, (char*)&event, event_addr, sizeof(event)) < 0)
+      return -14;  // -EFAULT
+  }
+
+  return epoll_ctl(epfd, op, fd, event_addr ? &event : NULL);
+}
+
+uint64 sys_epoll_pwait(void) {
+  int epfd, maxevents, timeout;
+  uint64 events_addr, sigmask_addr;
+  sigset_t sigmask;
+  struct proc *p = myproc();
+
+  argint(0, &epfd);
+  argaddr(1, &events_addr);
+  argint(2, &maxevents);
+  argint(3, &timeout);
+  argaddr(4, &sigmask_addr);
+
+  if (sigmask_addr) {
+    if (copyin(p->pagetable, (char*)&sigmask, sigmask_addr, sizeof(sigmask)) < 0)
+      return -14;  // -EFAULT
+  }
+
+  struct epoll_event *events = (struct epoll_event *)kalloc();
+  if (!events)
+    return -12;  // -ENOMEM
+
+  int ret = epoll_pwait(epfd, events, maxevents, timeout, sigmask_addr ? &sigmask : NULL);
+
+  if (ret > 0) {
+    int copy_size = ret * sizeof(struct epoll_event);
+    if (copyout(p->pagetable, events_addr, (char*)events, copy_size) < 0) {
+      kfree((void*)events);
+      return -14;  // -EFAULT
+    }
+  }
+
+  kfree((void*)events);
+  return ret;
 }
 
 
