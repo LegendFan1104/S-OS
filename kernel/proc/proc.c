@@ -4,6 +4,7 @@
 #include "platform.h"
 #include "lock/spinlock.h"
 #include "proc/proc.h"
+#include "proc/futex.h"
 
 #include "fs/vfs/fs.h"
 
@@ -495,6 +496,11 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  // Clean up robust futex list before closing files
+  // This wakes up any threads waiting on futexes we own
+  futex_robust_list_cleanup(p);
+  futex_clear_waiter(p);
+
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
@@ -959,6 +965,79 @@ wait4(int pid, int *status, int options)
     if(!havekids || killed(p)){
       release(&wait_lock);
       return 0;
+    }
+    
+    sleep(p, &wait_lock);
+  }
+}
+
+// waitid implementation
+int waitid(int idtype, int id, siginfo_t *infop, int options)
+{
+  struct proc *pp;
+  int havekids, found_pid;
+  struct proc *p = myproc();
+  siginfo_t info;
+
+  acquire(&wait_lock);
+
+  for(;;){
+    havekids = 0;
+    found_pid = 0;
+    for(pp = proc; pp < &proc[NPROC]; pp++){
+      if(pp->parent == p){
+        acquire(&pp->lock);
+
+        havekids = 1;
+        
+        // Check idtype and id
+        if(idtype == P_PID && pp->pid != id){
+          release(&pp->lock);
+          continue;
+        }
+        if(idtype == P_PGID && pp->pgid != id){
+          release(&pp->lock);
+          continue;
+        }
+        
+        if((options & WNOHANG) && pp->state != ZOMBIE){
+          found_pid = 0;
+          release(&pp->lock);
+          continue;
+        }
+
+        if(pp->state == ZOMBIE){
+          found_pid = pp->pid;
+          
+          // Fill in siginfo
+          memset(&info, 0, sizeof(info));
+          info.si_signo = SIGCHLD;
+          info.si_code = CLD_EXITED;
+          info.si_pid = pp->pid;
+          info.si_uid = pp->uid;
+          info.si_status = pp->xstate;
+          
+          if(infop != 0 && copyout(p->pagetable, (uint64)infop, 
+            (char *)&info, sizeof(info)) < 0) 
+          {
+            release(&pp->lock);
+            release(&wait_lock);
+            return -1;
+          }
+          
+          if(!(options & WNOWAIT)) {
+            freeproc(pp);
+          }
+          release(&pp->lock);
+          release(&wait_lock);
+          return 0;  // waitid returns 0 on success
+        }
+        release(&pp->lock);
+      }
+    }
+    if(!havekids || killed(p)){
+      release(&wait_lock);
+      return -10;  // -ECHILD
     }
     
     sleep(p, &wait_lock);
