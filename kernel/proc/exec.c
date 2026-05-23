@@ -46,31 +46,51 @@ try_shebang(struct inode *ip, char *path, char **argv,
             char *interp_buf, int interp_size, char **new_argv)
 {
   char shebang_buf[256];
+  struct inode *interp_ip = 0;
 
   int n = ip->i_op->read(ip, 0, (uint64)shebang_buf, 0, sizeof(shebang_buf));
-  if (n < 2 || shebang_buf[0] != '#' || shebang_buf[1] != '!')
+
+  // Try to parse shebang line
+  if (n >= 2 && shebang_buf[0] == '#' && shebang_buf[1] == '!') {
+    // Find end of first line
+    int i = 2;
+    while (i < n && shebang_buf[i] != '\n')
+      i++;
+
+    // Skip whitespace after #!
+    int start = 2;
+    while (start < i && (shebang_buf[start] == ' ' || shebang_buf[start] == '\t'))
+      start++;
+
+    // Find interpreter path
+    int end = start;
+    while (end < i && shebang_buf[end] != ' ' && shebang_buf[end] != '\t')
+      end++;
+
+    if (end > start && end - start < interp_size) {
+      memcpy(interp_buf, shebang_buf + start, end - start);
+      interp_buf[end - start] = '\0';
+      interp_ip = namei(interp_buf);
+    }
+  }
+
+  // Fallback: if no shebang or interpreter not found, try architecture-specific default interpreter
+  if (!interp_ip) {
+#ifdef RISCV
+    interp_ip = namei("/riscv/sh");
+    if (interp_ip) {
+      safestrcpy(interp_buf, "/riscv/sh", interp_size);
+    }
+#else
+    interp_ip = namei("/sh");
+    if (interp_ip) {
+      safestrcpy(interp_buf, "/sh", interp_size);
+    }
+#endif
+  }
+
+  if (!interp_ip)
     return 0;
-
-  // Find end of first line
-  int i = 2;
-  while (i < n && shebang_buf[i] != '\n')
-    i++;
-
-  // Skip whitespace after #!
-  int start = 2;
-  while (start < i && (shebang_buf[start] == ' ' || shebang_buf[start] == '\t'))
-    start++;
-
-  // Find interpreter path
-  int end = start;
-  while (end < i && shebang_buf[end] != ' ' && shebang_buf[end] != '\t')
-    end++;
-
-  if (end <= start || end - start >= interp_size)
-    return 0;
-
-  memcpy(interp_buf, shebang_buf + start, end - start);
-  interp_buf[end - start] = '\0';
 
   // Build new argv: [interpreter, original_script, original_args...]
   new_argv[0] = interp_buf;
@@ -80,8 +100,7 @@ try_shebang(struct inode *ip, char *path, char **argv,
     new_argv[j] = argv[k];
   new_argv[j] = 0;
 
-  // Open interpreter file
-  return namei(interp_buf);
+  return interp_ip;
 }
 
 int flags2perm(int flags)

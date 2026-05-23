@@ -37,8 +37,14 @@ struct file_vnode {
 // };
 
 
+struct epoll;
+struct eventfd;
+struct timerfd;
+struct inotify;
+struct memfd;
+
 struct file {
-    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE, FD_SOCKET, FD_SYSFILE, FD_PROCFS } f_type;
+    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE, FD_SOCKET, FD_SYSFILE, FD_PROCFS, FD_EPOLL, FD_EVENTFD, FD_TIMERFD, FD_INOTIFY, FD_MEMFD } f_type;
     uint8 f_mode; // 访问模式
     uint8 f_flags; //进程打开的时候的标志
     uint32 f_socketflags; // socket使用的flag
@@ -51,6 +57,11 @@ struct file {
     struct inode *f_ip; // FD_REG and FD_DEVICE
     struct pipe *f_pipe; // FD_PIPE
     struct Socket *f_socket; // FD_SOCKET
+    struct epoll *epoll; // FD_EPOLL
+    struct eventfd *eventfd; // FD_EVENTFD
+    struct timerfd *timerfd; // FD_TIMERFD
+    struct inotify *inotify; // FD_INOTIFY
+    struct memfd *memfd; // FD_MEMFD
     int f_socketnum;
     void *f_extfile; // For EXT4 ext_dir || ext_file
     char f_path[MAXPATH]; //文件路径
@@ -81,6 +92,7 @@ void free_ext4_dir(struct ext4_dir *dir);
 void free_ext4_file(struct ext4_file *file);
 struct file_operations *get_fops();
 struct file*filealloc(void);
+void fileclose(struct file *f);
 void file_set_exec_flags(struct file *f, int fd, int flag);
 int file_get_exec_flags(struct file *f, int fd);
 

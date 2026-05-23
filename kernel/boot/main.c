@@ -15,6 +15,7 @@
 #include "lib/print.h"
 #include "platform.h"
 #include "sys/syslog.h"
+#include "proc/futex.h"
 
 #ifdef RISCV
 #include "defs.h"
@@ -47,6 +48,7 @@ void main()
 
 		kvminithart(); // turn on paging
 		procinit(); // process table
+		futex_init(); // futex subsystem
 		trapinit(); // trap vectors
 		trapinithart(); // install kernel trap vector
 		plicinit(); // set up interrupt controller
@@ -87,6 +89,7 @@ void main()
 		// printf("kvminit finish\n");
 		kvminithart();   // turn on paging
 		procinit();      // process table
+		futex_init();    // futex subsystem
 
 		virtio_disk_init2(); //初始化 rootfs的块设备
 		virtio_disk_init(); // emulated hard disk ps:如果使用SDCard需要修改
