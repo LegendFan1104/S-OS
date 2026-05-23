@@ -539,6 +539,7 @@ exit(int status)
   //SYS_set_tid_address
   if (p->clear_child_tid) {
     int clear = 0;
+    // Ignore copyout error - address might be invalid if user corrupted it
     copyout(p->pagetable, p->clear_child_tid, (char*)&clear, sizeof(clear));
     p->clear_child_tid = 0;
   }
