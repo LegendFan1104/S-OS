@@ -235,19 +235,20 @@ uint64
 sys_clock_nanosleep(void)
 {
     uint64 req_addr, rem_addr;
-    argaddr(1, &req_addr);
-    argaddr(2, &rem_addr);
-    struct timespec req, rem;
+    int clockid, flags;
+    argint(0, &clockid);
+    argint(1, &flags);
+    argaddr(2, &req_addr);
+    argaddr(3, &rem_addr);
+    struct timespec req;
     if (copyin(myproc()->pagetable, (char*)(&req), req_addr, sizeof(req)) < 0) {
         return -1;
     }
-    if (copyin(myproc()->pagetable, (char*)(&rem), rem_addr, sizeof(rem)) < 0) {
-        return -1;
-    }
-    uint64 n = req.tv_sec;
+    // Same tick-based sleep logic as sys_sleep and sys_nanosleep
+    int n = (int)(req.tv_sec * FREQUENCY / INTERVAL);
+    if (n <= 0) n = 1;
     acquire(&tickslock);
-    uint ticks0;  
-    ticks0 = ticks;
+    uint ticks0 = ticks;
     while(ticks - ticks0 < n){
         if(killed(myproc())){
             release(&tickslock);
@@ -255,8 +256,6 @@ sys_clock_nanosleep(void)
         }
         sleep(&ticks, &tickslock);
     }
-    struct timespec remp = {0, 0};
-    copyout(myproc()->pagetable, (uint64)rem_addr, (char*)&remp, sizeof(remp));
     release(&tickslock);
     return 0;
 }
