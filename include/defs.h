@@ -153,3 +153,29 @@ int clone(unsigned long flags, void *stack, int *ptid, unsigned long tls, int *c
 #define CLONE_PARENT 0x00000800  // 共享父进程
 
 uint64 getppid();
+
+// New LTP-critical syscalls
+uint64 sys_prctl(void);
+uint64 sys_getrlimit(void);
+uint64 sys_setrlimit(void);
+uint64 sys_getrusage(void);
+uint64 sys_getpriority(void);
+uint64 sys_setpriority(void);
+uint64 sys_umask(void);
+uint64 sys_statfs(void);
+uint64 sys_fstatfs(void);
+uint64 sys_sync(void);
+uint64 sys_fsync(void);
+uint64 sys_fdatasync(void);
+uint64 sys_rt_sigpending(void);
+uint64 sys_rt_sigsuspend(void);
+uint64 sys_sigaltstack(void);
+uint64 sys_fchownat(void);
+uint64 sys_mknodat(void);
+uint64 sys_personality(void);
+uint64 sys_setresuid(void);
+uint64 sys_getresuid(void);
+uint64 sys_setresgid(void);
+uint64 sys_getresgid(void);
+uint64 sys_getgroups(void);
+uint64 sys_setgroups(void);

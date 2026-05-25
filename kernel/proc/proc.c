@@ -175,6 +175,11 @@ found:
   //Signal
   p->sig = (struct sighand*)kmalloc(sizeof(struct sighand));
   p->block.val = 0;
+  p->pending.val = 0;
+  p->altstack.ss_sp = 0;
+  p->altstack.ss_size = 0;
+  p->altstack.ss_flags = 0;
+  p->umask = 022;  // default umask: rwxr-xr-x
 
 
   // Set up new context to start executing at forkret,

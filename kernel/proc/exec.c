@@ -38,6 +38,82 @@ struct commit {
 
 static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
 
+// Map pages at a specific virtual address range.
+// Unlike uvmalloc, this does not require contiguity with existing mappings.
+// Returns end VA on success, 0 on error.
+static uint64
+uvmmap_range(pagetable_t pagetable, uint64 va, uint64 size, int perm)
+{
+  char *mem;
+  uint64 a;
+  uint64 start = PGROUNDDOWN(va);
+  uint64 end = PGROUNDUP(va + size);
+
+  for(a = start; a < end; a += PGSIZE){
+    if(walkaddr(pagetable, a) != 0)
+      continue;
+    mem = kalloc();
+    if(mem == 0)
+      return 0;
+    memset(mem, 0, PGSIZE);
+    if(mappages(pagetable, a, PGSIZE, (uint64)mem, perm) != 0){
+      kfree(mem);
+      return 0;
+    }
+  }
+  return end;
+}
+
+// Resolve dynamic linker (ld-linux / ld-musl) path.
+// Tries: 1) exact PT_INTERP path  2) /mnt/glibc/lib/<basename>
+//        3) /mnt/musl/lib/<basename>  4) /mnt/glibc/lib/libc.so (musl fallback)
+//        5) /mnt/musl/lib/libc.so (musl fallback)
+// Returns inode on success, 0 on failure.
+static struct inode *
+resolve_interp(const char *interp_path)
+{
+  struct inode *ip;
+  char buf[256];
+  const char *basename;
+  int base_len;
+
+  // 1. Try exact PT_INTERP path (e.g. /lib/ld-linux-riscv64-lp64d.so.1)
+  ip = namei(interp_path);
+  if (ip) return ip;
+
+  // Extract basename
+  basename = interp_path;
+  for (const char *s = interp_path; *s; s++)
+    if (*s == '/') basename = s + 1;
+  base_len = strlen(basename);
+
+  // 2. Try /mnt/glibc/lib/<basename>
+  if (17 + base_len < 255) {
+    memcpy(buf, "/mnt/glibc/lib/", 15);
+    memcpy(buf + 15, basename, base_len + 1);
+    ip = namei(buf);
+    if (ip) return ip;
+  }
+
+  // 3. Try /mnt/musl/lib/<basename>
+  if (15 + base_len < 255) {
+    memcpy(buf, "/mnt/musl/lib/", 14);
+    memcpy(buf + 14, basename, base_len + 1);
+    ip = namei(buf);
+    if (ip) return ip;
+  }
+
+  // 4. For musl, libc.so doubles as ldso - try glibc's libc.so first
+  ip = namei("/mnt/glibc/lib/libc.so");
+  if (ip) return ip;
+
+  // 5. Try musl libc.so
+  ip = namei("/mnt/musl/lib/libc.so");
+  if (ip) return ip;
+
+  return 0;
+}
+
 // Try to handle shebang (#!) line.
 // On success, returns interpreter inode pointer and sets *out_argv to new argv.
 // On failure, returns 0.
@@ -233,6 +309,9 @@ execve(char *path, char **argv, char **envp)
     goto bad;
   uint64 elf_bss = 0, last_bss = 0;
   struct commit com;
+  char interp_path[128];
+  int has_interp = 0;
+  uint64 interp_entry = 0, interp_base = 0;
   int getphdr = 0;
   struct proghdr phdr;
   uint64 low_vaddr = 0xffffffffffffffff;
@@ -244,6 +323,14 @@ execve(char *path, char **argv, char **envp)
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(ip->i_op->read(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
+    if (ph.type == ELF_PROG_INTERP) {
+      int ilen = ph.filesz < 127 ? (int)ph.filesz : 127;
+      if(ip->i_op->read(ip, 0, (uint64)interp_path, (uint)ph.off, (uint)ilen) != ilen)
+        goto bad;
+      interp_path[ilen] = '\0';
+      has_interp = 1;
+      continue;
+    }
     if (ph.type == ELF_PROG_LOAD) {
       if (ph.memsz < ph.filesz) {
         printf("ph.memsz < ph.filesz\n");
@@ -296,6 +383,54 @@ execve(char *path, char **argv, char **envp)
   com.path = path;
 
   sz = PGROUNDUP(sz);
+
+  // Load dynamic linker (ld-linux / ld-musl) if the executable needs one
+  if (has_interp) {
+    struct inode *interp_ip = resolve_interp(interp_path);
+    if (interp_ip) {
+      interp_ip->i_op->lock(interp_ip);
+      struct elfhdr iehdr;
+      if (interp_ip->i_op->read(interp_ip, 0, (uint64)&iehdr, 0, sizeof(iehdr)) == sizeof(iehdr)
+          && iehdr.magic == ELF_MAGIC) {
+        interp_base = PGROUNDUP(sz);
+        struct proghdr iph;
+        int ok = 1;
+        for(int j=0, ioff=iehdr.phoff; j<iehdr.phnum && ok; j++, ioff+=sizeof(iph)){
+          if(interp_ip->i_op->read(interp_ip, 0, (uint64)&iph, ioff, sizeof(iph)) != sizeof(iph))
+            break;
+          if(iph.type != ELF_PROG_LOAD) continue;
+          if(iph.memsz < iph.filesz) break;
+
+          uint64 iva = interp_base + iph.vaddr;
+          int xperm = flags2perm(iph.flags);
+          if(uvmmap_range(pagetable, iva, iph.memsz, PTE_P|PTE_PLV|PTE_MAT|PTE_D|xperm) == 0) break;
+
+          uint64 margin = iph.vaddr % PGSIZE;
+          if(loadseg(pagetable, PGROUNDDOWN(iva), interp_ip,
+                    PGROUNDDOWN(iph.off), iph.filesz + margin) < 0) break;
+
+          // Zero BSS
+          uint64 bss_start = iva + iph.filesz;
+          uint64 bss_end = iva + iph.memsz;
+          for(uint64 b = bss_start; b < bss_end; b += PGSIZE){
+            uint64 pa = walkaddr(pagetable, b);
+            if(pa){
+              uint n = (bss_end - b < PGSIZE) ? (uint)(bss_end - b) : PGSIZE;
+              memset((void*)pa, 0, n);
+            }
+          }
+
+          uint64 seg_end = PGROUNDUP(iva + iph.memsz);
+          if(seg_end > sz) sz = seg_end;
+        }
+        if(ok) interp_entry = interp_base + iehdr.entry;
+        else { interp_entry = 0; interp_base = 0; }
+      }
+      interp_ip->i_op->unlock(interp_ip);
+    } else {
+      has_interp = 0;
+    }
+  }
 
   // printf("%p %p %p", elf_bss, last_bss, sz);
 
@@ -386,7 +521,7 @@ execve(char *path, char **argv, char **envp)
   alloc_aux(aux, AT_PHDR, phdr_addr);
   alloc_aux(aux, AT_PHENT, elf.phentsize);
   alloc_aux(aux, AT_PHNUM, elf.phnum);
-  alloc_aux(aux, AT_BASE, 0);
+  alloc_aux(aux, AT_BASE, interp_base);
   alloc_aux(aux, AT_ENTRY, elf.entry);
   alloc_aux(aux, AT_UID, 0);
   alloc_aux(aux, AT_EUID, 0);
@@ -440,7 +575,7 @@ execve(char *path, char **argv, char **envp)
   p->pagetable = pagetable;
   p->sz = sz;
   memset(p->trapframe, 0, sizeof(*(p->trapframe)));
-  p->trapframe->era = elf.entry;
+  p->trapframe->era = has_interp ? interp_entry : elf.entry;
   p->trapframe->sp = sp; // initial stack pointer
   p->trapframe->a1 = com.a1;
   p->trapframe->a2 = com.a2;
@@ -524,19 +659,25 @@ execve(char *path, char **argv, char **envp)
 
   uint64 elf_bss = 0, last_bss = 0;
   struct commit com;
-
+  char interp_path[128];
+  int has_interp = 0;
+  uint64 interp_entry = 0, interp_base = 0;
 
   // printf("alloc: %p\n", pagetable);
   // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(ip->i_op->read(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
       goto bad;
+    if(ph.type == ELF_PROG_INTERP) {
+      int ilen = ph.filesz < 127 ? (int)ph.filesz : 127;
+      if(ip->i_op->read(ip, 0, (uint64)interp_path, (uint)ph.off, (uint)ilen) != ilen)
+        goto bad;
+      interp_path[ilen] = '\0';
+      has_interp = 1;
+      continue;
+    }
     if(ph.type != ELF_PROG_LOAD)
       continue;
-    if(ph.type == ELF_PROG_INTERP) {
-      // printf("need\n");
-      com.interp = 1;
-    }
     if(ph.memsz < ph.filesz)
       goto bad;
     if(ph.vaddr + ph.memsz < ph.vaddr)
@@ -574,6 +715,58 @@ execve(char *path, char **argv, char **envp)
   com.path = path;
 
   sz = PGROUNDUP(sz);
+
+  // Load dynamic linker (ld-linux / ld-musl) if the executable needs one
+  if (has_interp) {
+    struct inode *interp_ip = resolve_interp(interp_path);
+    if (interp_ip) {
+      interp_ip->i_op->lock(interp_ip);
+      struct elfhdr iehdr;
+      if (interp_ip->i_op->read(interp_ip, 0, (uint64)&iehdr, 0, sizeof(iehdr)) == sizeof(iehdr)
+          && iehdr.magic == ELF_MAGIC) {
+        interp_base = PGROUNDUP(sz);
+        struct proghdr iph;
+        int ok = 1;
+        for(int j=0, ioff=iehdr.phoff; j<iehdr.phnum && ok; j++, ioff+=sizeof(iph)){
+          if(interp_ip->i_op->read(interp_ip, 0, (uint64)&iph, ioff, sizeof(iph)) != sizeof(iph))
+            break;
+          if(iph.type != ELF_PROG_LOAD) continue;
+          if(iph.memsz < iph.filesz) break;
+
+          uint64 iva = interp_base + iph.vaddr;
+          int xperm = flags2perm(iph.flags);
+#ifdef RISCV
+          if(uvmmap_range(pagetable, iva, iph.memsz, PTE_R|PTE_U|xperm) == 0) break;
+#else
+          if(uvmmap_range(pagetable, iva, iph.memsz, PTE_P|PTE_PLV|PTE_MAT|PTE_D|xperm) == 0) break;
+#endif
+
+          uint64 margin = iph.vaddr % PGSIZE;
+          if(loadseg(pagetable, PGROUNDDOWN(iva), interp_ip,
+                    PGROUNDDOWN(iph.off), iph.filesz + margin) < 0) break;
+
+          // Zero BSS
+          uint64 bss_start = iva + iph.filesz;
+          uint64 bss_end = iva + iph.memsz;
+          for(uint64 b = bss_start; b < bss_end; b += PGSIZE){
+            uint64 pa = walkaddr(pagetable, b);
+            if(pa){
+              uint n = (bss_end - b < PGSIZE) ? (uint)(bss_end - b) : PGSIZE;
+              memset((void*)pa, 0, n);
+            }
+          }
+
+          uint64 seg_end = PGROUNDUP(iva + iph.memsz);
+          if(seg_end > sz) sz = seg_end;
+        }
+        if(ok) interp_entry = interp_base + iehdr.entry;
+        else { interp_entry = 0; interp_base = 0; }
+      }
+      interp_ip->i_op->unlock(interp_ip);
+    } else {
+      has_interp = 0;
+    }
+  }
 
   // printf("%p %p %p", elf_bss, last_bss, sz);
 
@@ -659,6 +852,8 @@ execve(char *path, char **argv, char **envp)
 
   aux[AT_PAGESZ * 2 - 1] = PGSIZE;
 
+  aux[AT_BASE * 2 - 1] = interp_base;
+  aux[AT_ENTRY * 2 - 1] = elf.entry;
   aux[AT_RANDOM * 2 - 1] = rd_pos;
   aux[AT_SECURE * 2 - 1] = 0;
   aux[AT_NULL * 2 - 1] = 0;
@@ -711,7 +906,7 @@ execve(char *path, char **argv, char **envp)
   p->pagetable = pagetable;
   p->sz = sz;
   memset(p->trapframe, 0, sizeof(*(p->trapframe)));
-  p->trapframe->epc = elf.entry;  // initial program counter = main
+  p->trapframe->epc = has_interp ? interp_entry : elf.entry;
   p->trapframe->sp = sp; // initial stack pointer
   p->trapframe->a1 = com.a1;
   p->trapframe->a2 = com.a2;

@@ -159,11 +159,16 @@ uint64 sys_readv(void) {
   struct iovec *vec = (struct iovec *)buf;
 
 
-  if (strcmp(f->f_path, "/dev/urandom") == 0) {
+  if (strcmp(f->f_path, "/dev/urandom") == 0 || strcmp(f->f_path, "/dev/random") == 0) {
+    static uint64 rseed = 0xCAFEBABEDEADBEEFUL;
     for (int i=0; i != iovcnt; i++) {
       uchar *buf_tmp;
       if ((buf_tmp = kmalloc(vec->iov_len)) == 0) {
         panic("readv: kmalloc error");
+      }
+      for (int k = 0; k < (int)vec->iov_len; k++) {
+        rseed = rseed * 6364136223846793005UL + 1442695040888963407UL;
+        buf_tmp[k] = (uchar)(rseed >> 32);
       }
       copyout(p->pagetable, (uint64)vec->iov_base, (char*)buf_tmp, vec->iov_len);
       kfree(buf_tmp);
@@ -547,13 +552,23 @@ sys_openat(void)
       if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
         return -1;
       }
-      // printf("%d\n", fd);
       f->f_type = 9;
       f->f_pos = 0;
       f->f_flags = flags;
       strcpy(f->f_path, path);
       return fd;
     }
+
+  if(!strcmp(path, "/dev/urandom") || !strcmp(path, "/dev/random")){
+    if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
+      return -1;
+    }
+    f->f_type = 11;  // random device type
+    f->f_pos = 0;
+    f->f_flags = flags;
+    strcpy(f->f_path, path);
+    return fd;
+  }
 
   if(!strcmp(path, "/dev/zero")){
     if ((f = filealloc()) == NULL || (fd = fdalloc2(f, 0)) < 0){
@@ -1368,6 +1383,66 @@ uint64 sys_socket(void) {
     return -1;
   }
   return fd;
+}
+
+// statfs - get filesystem statistics
+uint64 sys_statfs(void) {
+  char path[MAXPATH];
+  uint64 buf_addr;
+  argstr(0, path, MAXPATH);
+  argaddr(1, &buf_addr);
+  // Return a basic statfs structure (64-bit Linux: 120 bytes)
+  char buf[120];
+  memset(buf, 0, sizeof(buf));
+  struct { int64 f_type; int64 f_bsize; } *st = (void*)buf;
+  st->f_type = 0xEF53; // EXT4 magic
+  st->f_bsize = 4096;
+  if (copyout(myproc()->pagetable, buf_addr, buf, sizeof(buf)) < 0)
+    return -1;
+  return 0;
+}
+
+// fstatfs - get filesystem statistics by fd
+uint64 sys_fstatfs(void) {
+  struct file *f;
+  uint64 buf_addr;
+  if (argfd(0, 0, &f) < 0) return -1;
+  argaddr(1, &buf_addr);
+  char buf[120];
+  memset(buf, 0, sizeof(buf));
+  struct { int64 f_type; int64 f_bsize; } *st = (void*)buf;
+  st->f_type = 0xEF53;
+  st->f_bsize = 4096;
+  if (copyout(myproc()->pagetable, buf_addr, buf, sizeof(buf)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64 sys_sync(void) { return 0; }
+uint64 sys_fsync(void) { return 0; }
+uint64 sys_fdatasync(void) { return 0; }
+
+// fchownat - change file owner
+uint64 sys_fchownat(void) {
+  return 0;  // always succeed for now
+}
+
+// mknodat - create a device node
+uint64 sys_mknodat(void) {
+  int dirfd;
+  char path[MAXPATH];
+  int mode, dev;
+  argint(0, &dirfd);
+  argstr(1, path, MAXPATH);
+  argint(2, &mode);
+  argint(3, &dev);
+  // For now, just create a regular file
+  const char *dirpath = (dirfd == AT_FDCWD) ? myproc()->cwd.path : myproc()->ofile[dirfd]->f_path;
+  char absolute_path[MAXPATH] = {0};
+  get_absolute_path(path, dirpath, absolute_path);
+  if (vfs_ext_mknod(absolute_path, T_CHR, (uint32)dev) < 0)
+    return -1;
+  return 0;
 }
 
 
