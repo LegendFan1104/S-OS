@@ -8,6 +8,7 @@
 #include "fs/ext4/vfs_ext4_ext.h"
 #include "sbi.h"
 #include "proc/futex.h"
+#include "lib/string.h"
 
 uint64
 sys_exit(void)
@@ -261,6 +262,200 @@ sys_clock_nanosleep(void)
 }
 
 uint64 sys_getegid(void) {
+  return 0;
+}
+
+// prctl - process control
+uint64 sys_prctl(void) {
+  int option;
+  uint64 arg2;
+  argint(0, &option);
+  argaddr(1, &arg2);
+
+  switch (option) {
+  case 1:  // PR_SET_PDEATHSIG
+    return 0;
+  case 2:  // PR_GET_PDEATHSIG
+    return 0;
+  case 3:  // PR_GET_DUMPABLE
+    return 1;
+  case 4:  // PR_SET_DUMPABLE
+    return 0;
+  case 5:  // PR_GET_NAME (deprecated, but used)
+    return 0;
+  case 9:  // PR_SET_MM
+    return 0;
+  case 11: // PR_CAPBSET_READ
+    return 1;
+  case 12: // PR_CAPBSET_DROP
+    return 0;
+  case 15: // PR_SET_NAME
+    return 0;
+  case 16: // PR_GET_NAME
+    if (arg2) {
+      copyout(myproc()->pagetable, arg2, myproc()->name, 16);
+    }
+    return 0;
+  case 22: // PR_SET_SECCOMP
+    return 0;
+  case 23: // PR_GET_SECCOMP
+    return 0;
+  case 32: // PR_SET_THP_DISABLE
+    return 0;
+  case 33: // PR_GET_THP_DISABLE
+    return 0;
+  case 35: // PR_GET_TID_ADDRESS
+    return 0;
+  case 43: // PR_SET_VMA
+    return 0;
+  case 47: // PR_GET_SPECULATION_CTRL
+    return 0;
+  case 53: // PR_SET_TIMERSLACK
+    return 0;
+  case 54: // PR_GET_TIMERSLACK
+    return 0;
+  default:
+    return 0;
+  }
+}
+
+uint64 sys_getrlimit(void) {
+  int resource;
+  uint64 rlim_addr;
+  argint(0, &resource);
+  argaddr(1, &rlim_addr);
+  // Return a generous default for all resources
+  struct { uint64 cur; uint64 max; } rlim;
+  rlim.cur = 0xFFFFFFFFFFFFFFFFUL;
+  rlim.max = 0xFFFFFFFFFFFFFFFFUL;
+  if (copyout(myproc()->pagetable, rlim_addr, (char*)&rlim, sizeof(rlim)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64 sys_setrlimit(void) {
+  return 0;  // accept any limit
+}
+
+uint64 sys_getrusage(void) {
+  int who;
+  uint64 rusage_addr;
+  argint(0, &who);
+  argaddr(1, &rusage_addr);
+  // struct rusage is 144 bytes on 64-bit Linux
+  char buf[144];
+  memset(buf, 0, sizeof(buf));
+  // Fill in ru_utime: tv_sec = ticks / frequency, tv_usec
+  struct proc *p = myproc();
+  uint64 *utime_sec = (uint64*)(buf + 0);
+  uint64 *utime_usec = (uint64*)(buf + 8);
+  uint64 *stime_sec = (uint64*)(buf + 16);
+  uint64 *stime_usec = (uint64*)(buf + 24);
+  *utime_sec = p->proc_tms.tms_utime / FREQUENCY;
+  *utime_usec = (p->proc_tms.tms_utime % FREQUENCY) * 1000000 / FREQUENCY;
+  *stime_sec = p->proc_tms.tms_stime / FREQUENCY;
+  *stime_usec = (p->proc_tms.tms_stime % FREQUENCY) * 1000000 / FREQUENCY;
+  if (copyout(p->pagetable, rusage_addr, buf, sizeof(buf)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64 sys_getpriority(void) {
+  int which, who;
+  argint(0, &which);
+  argint(1, &who);
+  // Return nice value (0-39, where 20 is neutral)
+  return 20 - myproc()->sched_priority;
+}
+
+uint64 sys_setpriority(void) {
+  int which, who, prio;
+  argint(0, &which);
+  argint(1, &who);
+  argint(2, &prio);
+  return 0;
+}
+
+uint64 sys_umask(void) {
+  int mask;
+  argint(0, &mask);
+  struct proc *p = myproc();
+  int old = p->umask;
+  p->umask = mask;
+  return old;
+}
+
+uint64 sys_personality(void) {
+  uint64 persona;
+  argaddr(0, &persona);
+  static uint64 current_persona = 0;
+  uint64 old = current_persona;
+  if (persona != 0xFFFFFFFFFFFFFFFFUL)
+    current_persona = persona;
+  return old;
+}
+
+uint64 sys_setresuid(void) {
+  int ruid, euid, suid;
+  argint(0, &ruid);
+  argint(1, &euid);
+  argint(2, &suid);
+  return 0;
+}
+
+uint64 sys_getresuid(void) {
+  uint64 ruid_addr, euid_addr, suid_addr;
+  argaddr(0, &ruid_addr);
+  argaddr(1, &euid_addr);
+  argaddr(2, &suid_addr);
+  struct proc *p = myproc();
+  if (ruid_addr && copyout(p->pagetable, ruid_addr, (char*)&p->uid, sizeof(int)) < 0)
+    return -1;
+  if (euid_addr && copyout(p->pagetable, euid_addr, (char*)&p->uid, sizeof(int)) < 0)
+    return -1;
+  if (suid_addr && copyout(p->pagetable, suid_addr, (char*)&p->uid, sizeof(int)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64 sys_setresgid(void) {
+  int rgid, egid, sgid;
+  argint(0, &rgid);
+  argint(1, &egid);
+  argint(2, &sgid);
+  return 0;
+}
+
+uint64 sys_getresgid(void) {
+  uint64 rgid_addr, egid_addr, sgid_addr;
+  argaddr(0, &rgid_addr);
+  argaddr(1, &egid_addr);
+  argaddr(2, &sgid_addr);
+  struct proc *p = myproc();
+  if (rgid_addr && copyout(p->pagetable, rgid_addr, (char*)&p->gid, sizeof(int)) < 0)
+    return -1;
+  if (egid_addr && copyout(p->pagetable, egid_addr, (char*)&p->gid, sizeof(int)) < 0)
+    return -1;
+  if (sgid_addr && copyout(p->pagetable, sgid_addr, (char*)&p->gid, sizeof(int)) < 0)
+    return -1;
+  return 0;
+}
+
+uint64 sys_getgroups(void) {
+  int gidsetsize;
+  uint64 grouplist_addr;
+  argint(0, &gidsetsize);
+  argaddr(1, &grouplist_addr);
+  if (gidsetsize > 0 && grouplist_addr) {
+    int gid = myproc()->gid;
+    if (copyout(myproc()->pagetable, grouplist_addr, (char*)&gid, sizeof(int)) < 0)
+      return -1;
+    return 1;
+  }
+  return 1;
+}
+
+uint64 sys_setgroups(void) {
   return 0;
 }
 

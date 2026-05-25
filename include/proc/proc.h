@@ -93,9 +93,17 @@ struct proc {
 
   //signal
   sigset_t block;
-  int signal; // 等待的信号
-  struct sighand *sig; // 信号处理相关
+  sigset_t pending;         // pending signals mask
+  int signal;               // 等待的信号
+  struct sighand *sig;      // 信号处理相关
   struct signal_frame *sig_frame;
+  struct {
+    uint64 ss_sp;
+    uint64 ss_size;
+    int ss_flags;
+  } altstack;               // alternate signal stack
+
+  int umask;                // file mode creation mask
 
   void *chan2;                // Used for futex
 

@@ -126,9 +126,9 @@ filestat(struct file *f, uint64 addr)
         if(copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -1;
         return 0;
-    } else if (f->f_type == FD_DEVICE) {
+    } else if (f->f_type == FD_DEVICE || f->f_type == 8 || f->f_type == 9 || f->f_type == 10 || f->f_type == 11) {
         memset(&st, 0, sizeof(st));
-        st.st_mode = 0x2000;
+        st.st_mode = 0x2000;  // char device
         st.st_nlink = 1;
         if(copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -1;
@@ -148,9 +148,9 @@ int filestatx(struct file *f, uint64 addr) {
         if(copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -1;
         return 0;
-    } else if (f->f_type == FD_DEVICE) {
+    } else if (f->f_type == FD_DEVICE || f->f_type == 8 || f->f_type == 9 || f->f_type == 10 || f->f_type == 11) {
         memset(&st, 0, sizeof(st));
-        st.stx_mode = 0x2000;
+        st.stx_mode = 0x2000;  // char device
         st.stx_nlink = 1;
         if(copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -1;
@@ -180,17 +180,44 @@ fileread(struct file *f, uint64 addr, int n)
     } else if (f->f_type == FD_PROCFS) {
         r = procfs_read(f, addr, n);
     } else if (f->f_type == 9) {
-        char a = 0;
-        copyout(myproc()->pagetable, addr, (char*)&a, sizeof(char));
+        // /dev/null: read returns 0 (EOF)
         return 0;
     } else if (f->f_type == 8) {
-        return 0;
+        // /dev/zero: fill user buffer with zeros
+        char zbuf[256];
+        int total = 0;
+        while (total < n) {
+            int chunk = n - total;
+            if (chunk > (int)sizeof(zbuf)) chunk = sizeof(zbuf);
+            memset(zbuf, 0, chunk);
+            if (copyout(myproc()->pagetable, addr + total, zbuf, chunk) < 0)
+                return -1;
+            total += chunk;
+        }
+        return total;
     } else if (f->f_type == 10) {
         // /dev/cpu_dma_latency - 返回0表示延迟为0us
         char buf[4] = {0};
         int len = n < 4 ? n : 4;
         copyout(myproc()->pagetable, addr, buf, len);
         return len;
+    } else if (f->f_type == 11) {
+        // /dev/urandom, /dev/random - simple PRNG output
+        static uint64 seed = 0xDEADBEEFCAFEBABEUL;
+        char rbuf[256];
+        int total = 0;
+        while (total < n) {
+            int chunk = n - total;
+            if (chunk > (int)sizeof(rbuf)) chunk = sizeof(rbuf);
+            for (int k = 0; k < chunk; k++) {
+                seed = seed * 6364136223846793005UL + 1442695040888963407UL;
+                rbuf[k] = (char)(seed >> 32);
+            }
+            if (copyout(myproc()->pagetable, addr + total, rbuf, chunk) < 0)
+                return -1;
+            total += chunk;
+        }
+        return total;
     } else{
         panic("fileread");
     }
@@ -238,6 +265,9 @@ filewrite(struct file *f, uint64 addr, int n)
     } else if(f->f_type == 10) {
         // /dev/cpu_dma_latency - 接受写入但不实际处理
         // 写入0表示禁止CPU进入深度睡眠状态
+        ret = n;
+    } else if(f->f_type == 8 || f->f_type == 9 || f->f_type == 11) {
+        // /dev/zero (8), /dev/null (9), /dev/[u]random (11): accept writes, discard data
         ret = n;
     } else {
         panic("filewrite");

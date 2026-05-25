@@ -66,6 +66,9 @@
 #define USTACK_GURAD_PAGE (USTACK - PGSIZE)
 #define USTACK_TOP (USTACK + USTACK_PAGE * PGSIZE)
 
+// Dynamic linker (ld-linux) load address - well above executable, below stack
+#define INTERP_BASE 0x2000000000
+
 // User memory layout.
 // Address zero first:
 //   text
@@ -129,6 +132,9 @@
 #define USTACK (MAXVA - 512 * 10 * PGSIZE - USTACK_PAGE * PGSIZE)
 #define USTACK_GURAD_PAGE (USTACK - PGSIZE)
 #define USTACK_TOP (USTACK + USTACK_PAGE * PGSIZE)
+
+// Dynamic linker (ld-linux) load address - well above executable, below stack
+#define INTERP_BASE 0x2000000000
 
 #define TRAPFRAME (MAXVA - PGSIZE)
 #define SIG_TRAMPOLINE   (TRAPFRAME - PGSIZE)
