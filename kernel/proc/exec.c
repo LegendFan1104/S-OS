@@ -842,6 +842,7 @@ execve(char *path, char **argv, char **envp)
   sp -= sp % 16;
 
   uint64 aux[MAX_AT * 2];
+  memset(aux, 0, sizeof(aux));
 
   for (int i=0;i<MAX_AT;i++) {
     if (i + 1 > AT_RANDOM) {
@@ -850,12 +851,20 @@ execve(char *path, char **argv, char **envp)
     aux[i * 2] = i + 1;
   }
 
+  aux[AT_PHDR * 2 - 1] = elf.phoff;
+  aux[AT_PHENT * 2 - 1] = elf.phentsize;
+  aux[AT_PHNUM * 2 - 1] = elf.phnum;
   aux[AT_PAGESZ * 2 - 1] = PGSIZE;
+  aux[AT_HWCAP * 2 - 1] = 0;
 
   aux[AT_BASE * 2 - 1] = interp_base;
   aux[AT_ENTRY * 2 - 1] = elf.entry;
-  aux[AT_RANDOM * 2 - 1] = rd_pos;
+  aux[AT_UID * 2 - 1] = 0;
+  aux[AT_EUID * 2 - 1] = 0;
+  aux[AT_GID * 2 - 1] = 0;
+  aux[AT_EGID * 2 - 1] = 0;
   aux[AT_SECURE * 2 - 1] = 0;
+  aux[AT_RANDOM * 2 - 1] = rd_pos;
   aux[AT_NULL * 2 - 1] = 0;
 
 

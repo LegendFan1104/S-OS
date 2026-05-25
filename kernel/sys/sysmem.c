@@ -117,6 +117,9 @@ uint64 sys_munmap(void) {
     argaddr(0, &addr);
     argaddr(1, &length);
 
+    // Round length up to page size to keep VMA metadata aligned
+    length = PGROUNDUP(length);
+
     int i;
     struct proc *p = myproc();
 
