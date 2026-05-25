@@ -113,3 +113,30 @@
 #define SYS_sched_get_priority_min  126
 #define SYS_sched_setaffinity   122
 #define SYS_sched_getaffinity   123
+
+// Missing critical syscalls for LTP
+#define SYS_prctl               167
+#define SYS_getrlimit           163
+#define SYS_setrlimit           164
+#define SYS_getrusage           165
+#define SYS_getpriority         141
+#define SYS_setpriority         140
+#define SYS_umask               166
+#define SYS_statfs              43
+#define SYS_fstatfs             44
+#define SYS_sync                81
+#define SYS_fsync               82
+#define SYS_fdatasync           83
+#define SYS_rt_sigpending       136
+#define SYS_rt_sigsuspend       133
+#define SYS_sigaltstack         132
+#define SYS_fchownat            54
+#define SYS_mknodat             33
+#define SYS_personality         92
+#define SYS_setresuid           147
+#define SYS_getresuid           148
+#define SYS_setresgid           149
+#define SYS_getresgid           150
+#define SYS_getgroups           158
+#define SYS_setgroups           159
+#define SYS_getcwd              17
