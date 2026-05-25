@@ -90,16 +90,17 @@ uint64 sys_nanosleep(void) {
     uint64 req_addr, rem_addr;
     argaddr(0, &req_addr);
     argaddr(1, &rem_addr);
-    struct timespec req, rem;
+    struct timespec req;
     if (copyin(myproc()->pagetable, (char*)(&req), req_addr, sizeof(req)) < 0) {
         return -1;
     }
-    if (copyin(myproc()->pagetable, (char*)(&rem), rem_addr, sizeof(rem)) < 0) {
-        return -1;
-    }
-    uint64 n = req.tv_sec;
+    // Convert to ticks, same conversion musl uses for SYS_sleep
+    // FREQUENCY/INTERVAL = ticks per second (10000000/1950000 = 5)
+    int n = (int)(req.tv_sec * FREQUENCY / INTERVAL);
+    if (n <= 0) n = 1;
+    // Same logic as sys_sleep - proven to work with musl
     acquire(&tickslock);
-    ticks0 = ticks;
+    uint ticks0 = ticks;
     while(ticks - ticks0 < n){
         if(killed(myproc())){
             release(&tickslock);
