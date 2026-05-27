@@ -1,14 +1,44 @@
+# Build directories
 build/
-bin/
-image/
-*.img
+user/build/
+
+# Compiled object files
 *.o
 *.d
-kernel-rv
+
+# Kernel binaries
 kernel-la
-data/
-user/initcode-la
-user/initcode-rv
-oskernel2025-a20/
-user/initcode-la
-user/initcode-rv
+kernel-rv
+build/loongarch/kernel-la
+build/riscv/kernel-rv
+
+# Disk images
+disk.img
+disk-la.img
+sdcard-rv.img
+sdcard-la.img
+
+# Temporary files
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+
+tmp/
+
+CLAUDE.md
+
+cal_lines.sh
+disasm_kernel.sh
+qemu.log
+virt_la_debug.sh
+
+sdcard-contents/
+sdcard-extracted/
