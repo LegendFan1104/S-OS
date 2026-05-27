@@ -51,4 +51,6 @@ struct tms {
 #define CLOCK_BOOTTIME_ALARM		9
 #define CLOCK_TAI                      11
 
+#define TIMER_ABSTIME 1
+
 #endif

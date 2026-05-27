@@ -94,14 +94,14 @@ uint64 sys_nanosleep(void) {
     if (copyin(myproc()->pagetable, (char*)(&req), req_addr, sizeof(req)) < 0) {
         return -1;
     }
-    // Convert to ticks, same conversion musl uses for SYS_sleep
-    // FREQUENCY/INTERVAL = ticks per second (10000000/1950000 = 5)
-    int n = (int)(req.tv_sec * FREQUENCY / INTERVAL);
+    if (req.tv_sec > 60)
+        req.tv_sec = 60;
+    uint64 n64 = req.tv_sec * FREQUENCY / INTERVAL;
+    int n = (n64 > 0x7FFFFFFFULL) ? 0x7FFFFFFF : (int)n64;
     if (n <= 0) n = 1;
-    // Same logic as sys_sleep - proven to work with musl
     acquire(&tickslock);
     uint ticks0 = ticks;
-    while(ticks - ticks0 < n){
+    while((int)(ticks - ticks0) < n){
         if(killed(myproc())){
             release(&tickslock);
             return -1;
@@ -136,17 +136,12 @@ uint64 sys_clock_gettime(void) {
     int clockid;
     argint(0, &clockid);
     argaddr(1, &addr);
-    if(clockid == CLOCK_REALTIME){
-        struct timespec ts;
-        uint64 timestamp = rdtime();
-        // printf("[sys_clock_gettime] timestamp: %p, ticks: %p\n", timestamp, ticks);
-        ts.tv_sec = timestamp / FREQUENCY;
-        ts.tv_nsec = (timestamp % FREQUENCY) * 1000000000 / FREQUENCY;
-        // printf("[sys_clock_gettime] sec: %d, nsec: %d\n", ts.sec, ts.nsec);
-
-        if(copyout(myproc()->pagetable, (uint64)addr, (char*)&ts, sizeof(ts)) < 0)
-            return -1;
-    }
+    struct timespec ts;
+    uint64 timestamp = rdtime();
+    ts.tv_sec = timestamp / FREQUENCY;
+    ts.tv_nsec = (timestamp % FREQUENCY) * 1000000000 / FREQUENCY;
+    if(copyout(myproc()->pagetable, (uint64)addr, (char*)&ts, sizeof(ts)) < 0)
+        return -1;
     return 0;
 }
 

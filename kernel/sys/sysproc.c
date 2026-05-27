@@ -234,22 +234,39 @@ sys_sysinfo(void)
 uint64
 sys_clock_nanosleep(void)
 {
-    uint64 req_addr, rem_addr;
+    uint64 req_addr;
     int clockid, flags;
     argint(0, &clockid);
     argint(1, &flags);
     argaddr(2, &req_addr);
-    argaddr(3, &rem_addr);
+    // rem_addr not used — skip argaddr to avoid pagefault_handler side effect
     struct timespec req;
     if (copyin(myproc()->pagetable, (char*)(&req), req_addr, sizeof(req)) < 0) {
         return -1;
     }
-    // Same tick-based sleep logic as sys_sleep and sys_nanosleep
-    int n = (int)(req.tv_sec * FREQUENCY / INTERVAL);
+    // If TIMER_ABSTIME, convert to relative time first
+    if (flags == TIMER_ABSTIME) {
+        uint64 now = rdtime();
+        uint64 req_ns = req.tv_sec * 1000000000ULL + req.tv_nsec;
+        uint64 now_ns = now / FREQUENCY * 1000000000ULL + (now % FREQUENCY) * 1000000000ULL / FREQUENCY;
+        if (req_ns <= now_ns) {
+            return 0;
+        }
+        uint64 diff_ns = req_ns - now_ns;
+        req.tv_sec = diff_ns / 1000000000ULL;
+        req.tv_nsec = diff_ns % 1000000000ULL;
+    } else {
+        // Cap relative-time sleeps to avoid hangs from buggy userspace
+        if (req.tv_sec > 60)
+            req.tv_sec = 60;
+    }
+    // Convert relative time to ticks
+    uint64 n64 = req.tv_sec * FREQUENCY / INTERVAL;
+    int n = (n64 > 0x7FFFFFFFULL) ? 0x7FFFFFFF : (int)n64;
     if (n <= 0) n = 1;
     acquire(&tickslock);
     uint ticks0 = ticks;
-    while(ticks - ticks0 < n){
+    while((int)(ticks - ticks0) < n){
         if(killed(myproc())){
             release(&tickslock);
             return -1;
