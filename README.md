@@ -24,4 +24,29 @@ T2026104869910625
    make clean
    make all
    ```
-   编译后生成kernel-la、kernel-rv内核文件，disk.img、disk-la.img为磁盘文件
+3. 分别运行测试
+   **RISC-V 测试：**
+```bash
+qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bios default \
+  -drive file=sdcard-rv.img,if=none,format=raw,id=x0 \
+  -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+  -no-reboot \
+  -device virtio-net-device,netdev=net \
+  -netdev user,id=net \
+  -rtc base=utc \
+  -drive file=tmp/fs.img,if=none,format=raw,id=x1 \
+  -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
+```
+
+**LoongArch 测试：**
+```bash
+qemu-system-loongarch64 -kernel kernel-la -m 1G -nographic -smp 1 \
+  -drive file=sdcard-la.img,if=none,format=raw,id=x0 \
+  -device virtio-blk-pci,drive=x0 \
+  -no-reboot \
+  -device virtio-net-pci,netdev=net0 \
+  -netdev user,id=net0 \
+  -rtc base=utc \
+  -drive file=disk-la.img,if=none,format=raw,id=x1 \
+  -device virtio-blk-pci,drive=x1
+```
