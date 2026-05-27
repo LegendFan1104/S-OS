@@ -1,4 +1,4 @@
-## S-OS队
+## S-OS队（SuperOS）
 
 T2026104869910625
 
@@ -13,19 +13,19 @@ T2026104869910625
 ## 运行方法
 
 1. 拉取docker官方测评镜像
-   ```bash
-   docker run -it --name sos1 -v "$(pwd)":/workspace -w /workspace zhouzhouyi/os-contest:20260510 bash
-   docker start sos1
-   docker exec -it sos1 bash
-   ```
+```bash
+docker run -it --name sos -v "$(pwd)":/workspace -w /workspace zhouzhouyi/os-contest:20260510 bash
+docker start sos
+docker exec -it sos bash
+```
 
 2. 容器内编译
-   ```bash
-   make clean
-   make all
-   ```
+```bash
+make clean
+make all
+```
 3. 分别运行测试
-   **RISC-V 测试：**
+**RISC-V 测试：**
 ```bash
 qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bios default \
   -drive file=sdcard-rv.img,if=none,format=raw,id=x0 \
@@ -34,7 +34,7 @@ qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bio
   -device virtio-net-device,netdev=net \
   -netdev user,id=net \
   -rtc base=utc \
-  -drive file=tmp/fs.img,if=none,format=raw,id=x1 \
+  -drive file=disk.img,if=none,format=raw,id=x1 \
   -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 ```
 
