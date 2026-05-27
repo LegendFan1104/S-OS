@@ -812,6 +812,12 @@ int kill_signal(int pid, int sig) {
     acquire(&p->lock);
     if (p->pid == pid) {
       p->signal = sig;
+      // Mark as killed so sleep/wait loops see it via killed()
+      if (sig == SIGKILL || sig == SIGTERM || sig == SIGINT || sig == SIGQUIT)
+        p->killed = 1;
+      // Wake up the target so it can react to the signal
+      if (p->state == SLEEPING)
+        p->state = RUNNABLE;
     }
     release(&p->lock);
   }
@@ -820,17 +826,19 @@ int kill_signal(int pid, int sig) {
 
 int tkill(int pid, int sig) {
   struct proc *p;
-  // printf("222\n");
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if (p->pid == pid) {
       p->signal = sig;
+      if (sig == SIGKILL || sig == SIGTERM || sig == SIGINT || sig == SIGQUIT)
+        p->killed = 1;
+      if (p->state == SLEEPING)
+        p->state = RUNNABLE;
       release(&p->lock);
       return 0;
     }
     release(&p->lock);
   }
-  // printf("111\n");
   return -1;
 }
 
