@@ -2,134 +2,124 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 运行环境
+## 项目概述
 
-- 代码存储在**宿主机**，编译工具链和 QEMU 运行在 **Docker 容器**中，容器名为 `sos1`。
-- 执行命令时，建议先进入容器的交互式 shell，再执行后续命令：
+SOS（SuperOS）是基于 MIT XV6 的 C 语言教学操作系统，支持 **LoongArch64** 和 **RISC-V 64** 双架构。已通过全国大学生计算机系统能力大赛初赛的 Basic、Busybox、Libctest 和 Libcbench 测例。
+
+## 构建与运行
+
+**所有构建命令必须在 Docker 容器内执行。** 先通过 `docker exec -it sos3 bash` 进入容器，容器内已配置好所有工具链。
+
+### 编译
 
 ```bash
-docker exec -it sos1 bash
+make all              # 一次生成两种架构的内核镜像：kernel-la（LoongArch）和 kernel-rv（RISC-V）
+make clean            # 清理所有构建产物
 ```
 
-- 进入交互式环境后，`make`、`qemu-*` 等命令可直接执行，无需再加 `docker exec sos1` 前缀。
-- 绝对不要直接在宿主机上运行 `make` 或交叉编译工具链。
+### 测试
 
-## 构建命令
+测评机在项目根目录运行 `make all` 生成两个内核二进制文件，然后分别用以下命令启动测试：
 
+**RISC-V 测试：**
 ```bash
-# 全量构建（先 RISC-V，后 LoongArch，包含内核 + 磁盘镜像）
-make all
-
-# 单架构构建
-make build-release-riscv       # RISC-V release
-make build-release-loongarch   # LoongArch release
-make build-debug-riscv         # RISC-V debug（带 GDB 符号）
-
-# 单独构建磁盘镜像（将 user/bin/ 打包为 ext4）
-make make-image                # RISC-V → disk.img
-make make-image-la             # LoongArch → disk-la.img
-
-# 清理所有构建产物
-make clean
-```
-
-构建产物：`kernel-rv`、`kernel-la`（内核文件），`disk.img`、`disk-la.img`（ext4 根文件系统镜像）。
-
-## QEMU 测试命令
-
-**测试耗时约 30 分钟，非必要不运行。** 仅在用户明确要求或完成关键底层修改后才执行测试。
-
-### RISC-V 测试
-
-```bash
-qemu-system-riscv64 -machine virt -bios default -kernel kernel-rv \
-  -m 1G -smp 1 -nographic \
-  -drive file=basic/sdcard-rv.img,if=none,format=raw,id=x0 \
+qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bios default \
+  -drive file=sdcard-rv.img,if=none,format=raw,id=x0 \
   -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+  -no-reboot \
+  -device virtio-net-device,netdev=net \
+  -netdev user,id=net \
   -rtc base=utc \
-  -drive file=disk.img,if=none,format=raw,id=x1 \
+  -drive file=tmp/fs.img,if=none,format=raw,id=x1 \
   -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 ```
 
-- `virtio-mmio-bus.0`：挂载 `basic/sdcard-rv.img`（测评用 sdcard 镜像）
-- `virtio-mmio-bus.1`：挂载 `disk.img`（用户程序数据盘）
-
-### LoongArch 测试
-
+**LoongArch 测试：**
 ```bash
 qemu-system-loongarch64 -kernel kernel-la -m 1G -nographic -smp 1 \
-  -drive file=basic/sdcard-la.img,if=none,format=raw,id=x0 \
-  -device virtio-blk-pci,drive=x0 -no-reboot \
-  -device virtio-net-pci,netdev=net0 -netdev user,id=net0 \
+  -drive file=sdcard-la.img,if=none,format=raw,id=x0 \
+  -device virtio-blk-pci,drive=x0 \
+  -no-reboot \
+  -device virtio-net-pci,netdev=net0 \
+  -netdev user,id=net0 \
   -rtc base=utc \
   -drive file=disk-la.img,if=none,format=raw,id=x1 \
   -device virtio-blk-pci,drive=x1
 ```
 
-- 第一个 virtio-blk-pci：挂载 `basic/sdcard-la.img`（测评用 sdcard 镜像）
-- 第二个 virtio-blk-pci：挂载 `disk-la.img`（用户程序数据盘）
-- `virtio-net-pci`：提供网络支持
+- `sdcard-la.img` / `sdcard-rv.img`：两个架构下的测试用例磁盘镜像
+- 测试耗时很长（20 分钟以上），**非必要不测试**，仅在用户明确要求或涉及关键路径修改时才运行
+- 编译输出很长会消耗大量 token，**只关注报错部分即可**
 
-### 简化启动（Makefile 封装）
+## 架构
 
-Makefile 中有封装好的 QEMU 启动目标，但内部调用的是 `scripts/qemu.sh` 和 `scripts/qemu-loongarch.sh`，使用的参数可能与上述完整测试命令不同，仅用于快速开发调试：
-
-```bash
-make qemu-riscv       # 快速启动 RISC-V（不跑完整测评）
-make qemu-loongarch   # 快速启动 LoongArch
-make qemu-gdb-riscv   # Debug 模式 + GDB server
-```
-
-## 架构概览
-
-**SOS** 是一个支持 **RISC-V**（RV64）和 **LoongArch**（LA64）双架构的操作系统内核。通过编译时宏和目录隔离实现代码复用：
-
-- `#ifdef RISCV` / `#ifdef LOONGARCH` 区分架构相关代码路径
-- 架构专有文件放在 `riscv/` 或 `loongarch/` 子目录中，CMake 根据架构自动选择编译
-- 平台无关逻辑（调度器、VFS、EXT4、伙伴分配器）直接共用
-
-| 组件 | RISC-V | LoongArch |
-|------|--------|-----------|
-| 页表 | Sv39（三级） | LA64（四级）+ DMW 直接映射窗口 |
-| 中断控制器 | PLIC | LS7A APIC + ExtIOI |
-| 设备访问 | MMIO 直接映射 | PCI 枚举 + DMW 映射 |
-| 异常入口 | `trampoline.S` | `uservec.S` / `kernelvec.S` |
-| 编译器 | `riscv64-unknown-elf-gcc` | `loongarch64-linux-gnu-gcc` |
-| 链接脚本 | `kernel/linker/riscv/` | `kernel/linker/loongarch/` |
-
-### 关键子系统
-
-- **内存管理**：伙伴分配器（`kernel/mem/buddysystem.c`）→ 页分配器（`kalloc.c`）→ 虚拟内存（`vm.c`），支持 lazy allocation 和 mmap 缺页处理
-- **进程管理**：64 槽 `proc[]` 表，简单轮转调度，支持 `fork`/`execve`/`clone`，进程状态流：UNUSED → USED → RUNNABLE ↔ RUNNING ↔ SLEEPING → ZOMBIE
-- **文件系统**：VFS 抽象层（`kernel/fs/vfs/`）+ 嵌入式 lwext4 库（`kernel/fs/ext4/lwext4/`），支持常规文件、管道、socket、设备文件，带缓冲区缓存（`bio.c`）
-- **系统调用**：100+ Linux 兼容系统调用，路径：`ecall` → `trampoline.S`（uservec）→ `usertrap()` → `syscall()` → `sys_xxx()` → `usertrapret()` → `sret`
-- **信号处理**：完整信号机制，支持自定义 handler、sigreturn trampoline、嵌套信号帧链表
-- **同步机制**：自旋锁（关中断）、睡眠锁、信号量，核心 sleep/wakeup 等待唤醒机制
-- **用户程序**：源码位于 `user/app/` 和 `user/tests/`，链接 `ulib`，编译后打包进 ext4 磁盘镜像
-
-### 用户进程虚拟地址布局
+### 目录结构
 
 ```
-0x0                   代码段 & 数据段（ELF 加载）
-  ...                 堆（brk 扩展）
-USTACK                用户栈（32 页 + guard page）
-  ...
-SIG_TRAMPOLINE        信号 trampoline 代码
-TRAMPOLINE（RISC-V）  异常进出 trampoline
-TRAPFRAME             进程异常上下文
-KSTACK                内核栈（每进程 6 页 + guard）
+hal/              # 硬件抽象层 — 架构相关的启动/入口/异常陷入/上下文切换
+  loongarch/        # LoongArch: entry.S, trampoline.S, kernelvec.S, swtch.S, tlbrefill.S, uart.c
+  riscv/            # RISC-V: entry.S, trampoline.S, kernelvec.S, switch.S, start.c, uart.c, sbi.c
+hsai/             # HSAI（硬件-软件抽象接口）— 异常处理、UART/PLIC、内存
+kernel/           # 架构无关的内核代码 + driver/{loongarch,riscv}/ 下的架构相关驱动
+  driver/           # loongarch/: pci.c, virtio_disk.c, virtio_pci.c  |  riscv/: virt.c
+  fs/               # ext4 文件系统实现 + VFS 层（ext4, vfat）
+user/             # 用户态 initcode（作为 PID 1 加载的最小程序）
+include/          # 所有头文件，目录结构与源码树对应
+
+sdcard-la.img     #loongarc测试用例
+sdcard-rv.img     #riscv测试用例
 ```
 
-### 磁盘布局
+### 多架构策略
 
-- **VIRTIO0**（第一个 virtio 块设备）：rootfs（EXT4，512MB），含 BusyBox 和测试程序
-- **VIRTIO1**（第二个 virtio 块设备）：辅助数据盘（EXT4）
+架构选择通过代码中 **编译期 `#ifdef RISCV`** 实现。Makefile 在 RISC-V 构建时设置 `-DRISCV=1`；LoongArch 不设此标志（视为默认）。HSAI 层通过统一 API 抽象架构差异（`hsai_trap_init`、`hsai_set_trapframe_*`、`hsai_swtch` 等）。
 
-## 注意事项
+### 启动流程
 
-- 修改底层代码（中断、页表、寄存器、汇编）时，务必先确认文件属于哪个架构，避免跨架构污染。
-- RISC-V 构建包含 `libc/` 头文件，LoongArch 使用工具链自带的 libc（见 CMakeLists.txt:50-52），两者不可混用。
-- 用户程序编译后输出到 `bin/app/`，测试用脚本位于 `user/tests/`。
-- `basic/` 目录存放预构建的 sdcard 镜像（测评用），不可随意修改。
-- `oskernel2025-a20/` 是外部参考实现，不属于 SOS 核心构建系统。
-- 修改用户程序后需重新 `make make-image`（或 `make-image-la`）以更新磁盘镜像中的内容。
+1. **QEMU** 加载内核并跳转到 `hal/<arch>/entry.S` 中的 `_entry`
+2. Entry 阶段：设置 DMW（LoongArch）/ 跳转到 `start`（RISC-V），配置每 CPU 栈，清零 BSS，然后调用 `kernel/sos_start_kernel.c` 中的 `sos_start_kernel()`
+3. `sos_start_kernel()` 按顺序初始化各子系统：UART → 线程 → 进程 → 物理内存 (`pmem`) → 虚拟内存 (`vmem`) → slab 分配器 → 异常处理 → 磁盘 (VirtIO) → 文件系统 (ext4) → 创建首个用户进程 (`init_process`) → 进入**调度器**
+
+### 进程与线程模型
+
+- **进程**（`proc_t`，见 `process.h`）：最多 `NPROC=16`，每个进程有页表、VMA 链表、文件表、信号处理和线程队列。状态转换：UNUSED → USED → RUNNABLE → RUNNING → SLEEPING/ZOMBIE。
+- **线程**（`thread_t`，见 `thread.h`）：池大小为 `THREAD_NUM=1024`。每个进程至少有一个主线程；通过 `clone(CLONE_VM)` 创建额外线程。每个线程有自己的内核栈和上下文。
+- **调度器**（`process.c` 中的 `scheduler()`）：简单的轮询调度，永不返回（`__attribute__((noreturn))`）。通过 `yield()` / `sched()` 实现主动上下文切换。
+
+### 用户态/内核态切换（Trampoline）
+
+Trampoline 页（`trampoline.S`）被映射到用户页表和内核页表的相同虚拟地址。陷入流程：用户寄存器保存到进程的 `trapframe` → 加载内核页表 → `usertrap()` 处理异常 → `usertrapret()` 准备返回 → trampoline 中的 `userret` 恢复用户上下文并执行 `ertn`/`sret`。
+
+### 虚拟内存
+
+- `vmem.c` 提供页表遍历、映射（`mappages`）、分配（`uvmalloc`）以及用户态/内核态之间的 copy-in/out
+- LoongArch 使用基于 DMW 的等值映射（虚拟地址高位置 `0x9`）—— 参见 `vmem.h` 中的 `to_vir()`/`to_phy()`
+- RISC-V 使用标准 Sv39 页表，配合 `mcmodel=medany`
+
+### 文件系统
+
+- **VFS 层**（`fs.h`, `fs.c`）通过 `filesystem_op_t` 函数指针支持可插拔文件系统
+- **ext4** 是主文件系统，由 `kernel/fs/ext4*.c` 实现标准 ext4 磁盘数据结构。VFS 操作位于 `kernel/fs/vfs_ext4.c`
+- **vfat** 有骨架支持（`vfs_vfat.c`）
+- 块 I/O 经过缓冲区缓存（`bio.c`, `buf.h`/`BSIZE=4096`）
+
+### 系统调用
+
+所有系统调用均在 `kernel/syscall.c` 中实现，该文件是单体文件（约 3000 行）。命名规范：每个系统调用为 `sys_<名称>()`。主要系统调用：`openat`、`read`/`write`/`readv`/`writev`、`fork`/`clone`/`execve`/`wait`/`exit`、`mmap`/`munmap`/`mprotect`/`mremap`、`futex`、socket 调用（`socket`/`bind`/`connect`/`listen`）、`statx`/`fstatat`/`fstat`、`getdents64`、`mount`/`umount`。
+
+### 关键设计模式
+
+- **自旋锁**（`spinlock.c`）通过 `acquire()`/`release()` 保护共享数据结构，在临界区中关闭中断
+- **睡眠锁**（`sleeplock.c`）用于需要较长时间持有且允许进程睡眠的锁
+- **睡眠/唤醒**（`sleep_on_chan`/`wakeup`）用于在任意地址上实现阻塞同步
+- 错误码使用 Linux 风格的负 errno 值（`-ENOENT`、`-ENOMEM` 等）
+
+### 重要约束
+
+- `-DNUMCPU=1` — 仅单核，无需考虑多核同步
+- `NPROC=16` — 最多 16 个进程
+- `-DDEBUG=0`（默认关闭），通过 `LOG()` 宏控制调试日志输出
+- RISC-V 仅使用 OpenSBI（`-bios default`），入口地址为 `0x80200000`（而非 `0x80000000`）
+- LoongArch 使用 `-M virt` 机器类型启动 QEMU
+- **非必要不测试**：测试耗时 20 分钟以上，仅在用户明确要求或涉及关键路径修改时才运行测试
+- **编译输出很长**：只关注最后几行报错部分，不要浪费 token 在完整编译日志上

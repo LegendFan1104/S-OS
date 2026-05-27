@@ -1,75 +1,73 @@
-#include "platform.h"
-#include "lib/print.h"
-#include "dev/pci/pci.h"
-#include "dev/pci/virtio_pci.h"
+#if defined RISCV //riscv不使用这个文件
 
-#include <defs.h>
+#else
 
-/*
-pci bar layout:
-type 	region 		offset 	length	bar
-0x01	COMMON_CFG	0x0000	0x1000	4
-0x03	ISR_CFG		0x1000	0x1000	4
-0x04	DEVICE_CFG	0x2000	0x1000	4
-0x02	NOTIFY_CFG	0x3000	0x1000	4
-*/
+#include "types.h"
+#include "pci.h"
+#include "print.h"
 
-// virtio-net Feature Bits
-#define VIRTIO_NET_F_CSUM 					(0)
-#define VIRTIO_NET_F_GUEST_CSUM 			(1)
-#define VIRTIO_NET_F_CTRL_GUEST_OFFLOADS 	(2)
-#define VIRTIO_NET_F_MTU					(3)
-#define VIRTIO_NET_F_MAC 					(5)
-#define VIRTIO_NET_F_GUEST_TSO4 			(7)
-#define VIRTIO_NET_F_GUEST_TSO6 			(8)
-#define VIRTIO_NET_F_GUEST_ECN  			(9)
-#define VIRTIO_NET_F_GUEST_UFO  			(10)
-#define VIRTIO_NET_F_HOST_TSO4  			(11)
-#define VIRTIO_NET_F_HOST_TSO6  			(12)
-#define VIRTIO_NET_F_HOST_ECN   			(13)
-#define VIRTIO_NET_F_HOST_UFO   			(14)
-#define VIRTIO_NET_F_MRG_RXBUF  			(15)
-#define VIRTIO_NET_F_STATUS    				(16)
-#define VIRTIO_NET_F_CTRL_VQ   				(17)
-#define VIRTIO_NET_F_CTRL_RX   				(18)
-#define VIRTIO_NET_F_CTRL_VLAN 				(19)
-#define VIRTIO_NET_F_GUEST_ANNOUNCE			(21)
-#define VIRTIO_NET_F_MQ						(22)
-#define VIRTIO_NET_F_CTRL_MAC_ADDR			(23)
-#define VIRTIO_NET_F_HOST_USO 				(56)
-#define VIRTIO_NET_F_HASH_REPORT 			(57)
-#define VIRTIO_NET_F_GUEST_HDRLEN			(59)
-#define VIRTIO_NET_F_RSS					(60)
-#define VIRTIO_NET_F_RSC_EXT				(61)
-#define VIRTIO_NET_F_STANDBY				(62)
-#define VIRTIO_NET_F_SPEED_DUPLEX			(63)
-// Reserved Feature Bits
-#define VIRTIO_F_INDIRECT_DESC 				(28)
-#define VIRTIO_F_EVENT_IDX					(29)
-#define VIRTIO_F_VERSION_1					(32)
-#define VIRTIO_F_ACCESS_PLATFORM			(33)
-#define VIRTIO_F_RING_PACKED				(34)
-#define VIRTIO_F_IN_ORDER					(35)
-#define VIRTIO_F_ORDER_PLATFORM				(36)
-#define VIRTIO_F_SR_IOV						(37)
-#define VIRTIO_F_NOTIFICATION_DATA			(38)
-#define VIRTIO_F_NOTIF_CONFIG_DATA			(39)
-#define VIRTIO_F_RING_RESET					(40)
 
-/* Status byte for guest to report progress. */
-#define VIRTIO_CONFIG_STATUS_RESET          0x00
-#define VIRTIO_CONFIG_STATUS_ACK            0x01
-#define VIRTIO_CONFIG_STATUS_DRIVER         0x02
-#define VIRTIO_CONFIG_STATUS_DRIVER_OK      0x04
-#define VIRTIO_CONFIG_STATUS_FEATURES_OK    0x08
-#define VIRTIO_CONFIG_STATUS_FAILED         0x80
 
-#define PCI_REG8(reg)   (*(volatile uint8 *)(reg))
-#define PCI_REG16(reg)  (*(volatile uint16 *)(reg))
-#define PCI_REG32(reg)  (*(volatile uint32 *)(reg))
-#define PCI_REG64(reg)  (*(volatile uint64 *)(reg))
 
-//struct virtio_pci_hw g_hw = { 0 };
+
+
+/*pci.h*/
+struct pci_msix {
+    int bar_num;            // bar number
+    int irq_num;            // interrupt number
+    uint32 tbl_addr;           // tbl address
+    uint32 pba_addr;           // pba address
+  };
+  
+  /*之后放到virtio_pci.h*/
+typedef struct virtio_pci_hw {
+  uint8      bar;
+  uint8	    use_msix;
+//uint8      modern;
+  uint32     notify_off_multiplier;
+  void    *common_cfg;
+  void    *isr_cfg;
+  void    *device_cfg;
+  void    *notify_cfg;
+  struct pci_msix msix;
+} virtio_pci_hw_t;
+
+typedef int (*trap_handler_fn)(int);
+
+/*virtio_pci.h*/
+#define le64 uint64 //< 部分结构用到
+#define le32 uint32
+#define le16 uint16
+struct virtio_pci_cap {
+    uint8 cap_vndr; /* Generic PCI field: PCI_CAP_ID_VNDR */
+    uint8 cap_next; /* Generic PCI field: next ptr. */
+    uint8 cap_len; /* Generic PCI field: capability length */
+    uint8 cfg_type; /* Identifies the structure. */
+    uint8 bar; /* Where to find it. */
+    uint8 id; /* Multiple capabilities of the same type */
+    uint8 padding[2]; /* Pad to full dword. */
+    le32 offset; /* Offset within bar. */
+    le32 length; /* Length of the structure, in bytes. */
+};
+/* Common configuration */
+#define VIRTIO_PCI_CAP_COMMON_CFG 1
+/* Notifications */
+#define VIRTIO_PCI_CAP_NOTIFY_CFG 2
+/* ISR Status */
+#define VIRTIO_PCI_CAP_ISR_CFG 3
+/* Device specific configuration */
+#define VIRTIO_PCI_CAP_DEVICE_CFG 4
+/* PCI configuration access */
+#define VIRTIO_PCI_CAP_PCI_CFG 5
+/* Shared memory region */
+#define VIRTIO_PCI_CAP_SHARED_MEMORY_CFG 8
+/* Vendor-specific data */
+#define VIRTIO_PCI_CAP_VENDOR_CFG 9
+
+/*pci.h*/
+#define PCI_ADDR_CAP    		0x34
+#define PCI_CAP_ID_VNDR		    0x09
+#define PCI_ADDR_BAR0    		0x10
 
 static void *get_cfg_addr(uint64 pci_base, struct virtio_pci_cap *cap)
 {
@@ -141,6 +139,43 @@ next:
     return 0;
 }
 
+
+#define PCI_REG8(reg)   (*(volatile uint8 *)(reg))
+#define PCI_REG16(reg)  (*(volatile uint16 *)(reg))
+#define PCI_REG32(reg)  (*(volatile uint32 *)(reg))
+#define PCI_REG64(reg)  (*(volatile uint64 *)(reg))
+
+struct virtio_pci_common_cfg {
+    /* About the whole device. */
+    le32 device_feature_select; /* read-write */
+    le32 device_feature; /* read-only for driver */
+    le32 driver_feature_select; /* read-write */
+    le32 driver_feature; /* read-write */
+    le16 config_msix_vector; /* read-write */
+    le16 num_queues; /* read-only for driver */
+    uint8 device_status; /* read-write */
+    uint8 config_generation; /* read-only for driver */
+
+    /* About a specific virtqueue. */
+    le16 queue_select; /* read-write */
+    le16 queue_size; /* read-write */
+    le16 queue_msix_vector; /* read-write */
+    le16 queue_enable; /* read-write */
+    le16 queue_notify_off; /* read-only for driver */
+    le64 queue_desc; /* read-write */
+    le64 queue_driver; /* read-write avail ring */
+    le64 queue_device; /* read-write used ring */
+    le16 queue_notify_data; /* read-only for driver */
+    le16 queue_reset;       /* read-write */
+};
+
+void virtio_pci_set_status(virtio_pci_hw_t *hw, uint8 status)
+{
+    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
+    PCI_REG8(&cfg->device_status) = status;
+
+}
+
 uint64 virtio_pci_get_device_features(virtio_pci_hw_t *hw)
 {
     struct virtio_pci_common_cfg *cfg = hw->common_cfg;
@@ -154,19 +189,7 @@ uint64 virtio_pci_get_device_features(virtio_pci_hw_t *hw)
     return (f2 << 32) | f1;
 }
 
-uint64 virtio_pci_get_driver_features(virtio_pci_hw_t *hw)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG32(&cfg->driver_feature_select) = 0;
-    uint64 f1 = PCI_REG32(&cfg->driver_feature);
-
-    PCI_REG32(&cfg->driver_feature_select) = 1;
-    uint64 f2 = PCI_REG32(&cfg->driver_feature);
-
-    return (f2 << 32) | f1;
-}
-
+#define dsb() __sync_synchronize() //For virtio-blk-pci
 void virtio_pci_set_driver_features(virtio_pci_hw_t *hw, uint64 features)
 {
     struct virtio_pci_common_cfg *cfg = hw->common_cfg;
@@ -177,6 +200,22 @@ void virtio_pci_set_driver_features(virtio_pci_hw_t *hw, uint64 features)
     PCI_REG32(&cfg->driver_feature_select) = 1;
     dsb();
     PCI_REG32(&cfg->driver_feature) = features >> 32;
+}
+
+uint8 virtio_pci_get_status(virtio_pci_hw_t *hw)
+{
+    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
+    return PCI_REG8(&cfg->device_status);
+}
+
+uint16 virtio_pci_get_queue_enable(virtio_pci_hw_t *hw, int qid)
+{
+    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
+
+    PCI_REG16(&cfg->queue_select) = qid;
+    dsb();
+
+    return PCI_REG16(&cfg->queue_enable);
 }
 
 uint16 virtio_pci_get_queue_size(virtio_pci_hw_t *hw, int qid)
@@ -199,18 +238,7 @@ void virtio_pci_set_queue_size(virtio_pci_hw_t *hw, int qid, int qsize)
     PCI_REG16(&cfg->queue_size) = qsize;
 }
 
-void virtio_pci_set_queue_addr(virtio_pci_hw_t *hw, int qid, struct vring *vr)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG16(&cfg->queue_select) = qid;
-    dsb();
-
-    PCI_REG64(&cfg->queue_desc) = ((uint64)vr->desc) & (~(DMWIN_MASK));
-    PCI_REG64(&cfg->queue_driver) = ((uint64)vr->avail) & (~(DMWIN_MASK));
-    PCI_REG64(&cfg->queue_device) = ((uint64)vr->used) & (~(DMWIN_MASK));
-}
-
+#define DMWIN_MASK 0x9000000000000000 //< memlayout.h
 void virtio_pci_set_queue_addr2(virtio_pci_hw_t *hw, int qid, void *desc, void *avail, void *used)
 {
     struct virtio_pci_common_cfg *cfg = hw->common_cfg;
@@ -218,24 +246,25 @@ void virtio_pci_set_queue_addr2(virtio_pci_hw_t *hw, int qid, void *desc, void *
     PCI_REG16(&cfg->queue_select) = qid;
     dsb();
     // printf("%x %x %x\n", ((uint64)desc) & (~(DMWIN_MASK)), ((uint64)avail) & (~(DMWIN_MASK)), ((uint64)used) & (~(DMWIN_MASK)));
-    // PCI_REG64(&cfg->queue_desc) = ((uint64)desc) & (~(DMWIN_MASK));
-    // PCI_REG64(&cfg->queue_driver) = ((uint64)avail) & (~(DMWIN_MASK));
-    // PCI_REG64(&cfg->queue_device) = ((uint64)used) & (~(DMWIN_MASK));
-
-    PCI_REG64(&cfg->queue_desc) = VIRT2PHY((uint64) desc);
-    PCI_REG64(&cfg->queue_driver) = VIRT2PHY((uint64) avail);
-    PCI_REG64(&cfg->queue_device) = VIRT2PHY((uint64) used);
+    PCI_REG64(&cfg->queue_desc) = ((uint64)desc) & (~(DMWIN_MASK));
+    PCI_REG64(&cfg->queue_driver) = ((uint64)avail) & (~(DMWIN_MASK));
+    PCI_REG64(&cfg->queue_device) = ((uint64)used) & (~(DMWIN_MASK));
 }
 
-uint32 virtio_pci_get_queue_notify_off(virtio_pci_hw_t *hw, int qid)
+void virtio_pci_set_queue_enable(virtio_pci_hw_t *hw, int qid)
 {
     struct virtio_pci_common_cfg *cfg = hw->common_cfg;
 
     PCI_REG16(&cfg->queue_select) = qid;
     dsb();
 
-    return PCI_REG16(&cfg->queue_notify_off);
+    PCI_REG16(&cfg->queue_enable) = 1;;
 }
+
+
+/*
+  下面是写磁盘的功能
+*/
 
 void *virtio_pci_get_queue_notify_addr(virtio_pci_hw_t *hw, int qid)
 {
@@ -258,135 +287,4 @@ void virtio_pci_set_queue_notify(virtio_pci_hw_t *hw, int qid)
     PCI_REG32(pt) = 1;
 }
 
-void virtio_pci_set_queue_enable(virtio_pci_hw_t *hw, int qid)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG16(&cfg->queue_select) = qid;
-    dsb();
-
-    PCI_REG16(&cfg->queue_enable) = 1;;
-}
-
-uint16 virtio_pci_get_queue_enable(virtio_pci_hw_t *hw, int qid)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG16(&cfg->queue_select) = qid;
-    dsb();
-
-    return PCI_REG16(&cfg->queue_enable);
-}
-
-void virtio_pci_disable_queue_msix(virtio_pci_hw_t *hw, int qid)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG16(&cfg->queue_select) = qid;
-    dsb();
-
-    PCI_REG16(&cfg->queue_msix_vector) = 0xffff;
-}
-
-void virtio_pci_set_queue_msix(virtio_pci_hw_t *hw, int qid, uint16 msix_vector)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    // 首先 Queue Select 选择 对应的 VirtQueue
-    PCI_REG16(&cfg->queue_select) = qid;
-    dsb();
-
-    // 然后写入中断向量
-    PCI_REG16(&cfg->queue_msix_vector) = msix_vector;   // 写入 msix-vector
-}
-
-void virtio_pci_disable_config_msix(virtio_pci_hw_t *hw)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    PCI_REG16(&cfg->config_msix_vector) = 0xffff;
-    dsb();
-}
-
-void virtio_pci_set_config_msix(virtio_pci_hw_t *hw, uint16 msix_vector)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-    // config msix vector 对应的中断向量
-    PCI_REG16(&cfg->config_msix_vector) = msix_vector;
-    dsb();
-}
-
-uint32 virtio_pci_clear_isr(virtio_pci_hw_t *hw)
-{
-    uint32 irq = PCI_REG32(hw->isr_cfg);
-    return irq;
-}
-
-uint8 virtio_pci_get_status(virtio_pci_hw_t *hw)
-{
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-    return PCI_REG8(&cfg->device_status);
-}
-
-void virtio_pci_set_status(virtio_pci_hw_t *hw, uint8 status)
-{
-    struct virtio_pci_common_cfg *cfg = (struct virtio_pci_common_cfg *)hw->common_cfg;
-    PCI_REG8(&cfg->device_status) = status;
-
-}
-
-void virtio_pci_print_common_cfg(virtio_pci_hw_t *hw)
-{
-    // volatile uint32 *cap = (volatile uint32 *)hw->common_cfg;
-    // 打印 comman cfg 的内容
-    // for (int i = 0; i < sizeof(struct virtio_pci_common_cfg)/sizeof(uint32); ++i) {
-    //     printf("cap[%d]: 0x%08x\n", i, cap[i]);
-    // }
-
-    for (int i = 0; i < 8; ++i) {
-        // 每个队列支持的 max size
-        uint32 qsize = virtio_pci_get_queue_size(hw, i);
-        // 若队列支持的大小为 0, 则跳过
-        if (qsize == 0) continue;
-        // notify offset
-        uint32 notify_off = virtio_pci_get_queue_notify_off(hw, i);
-        // vring buffer total size, 根据 qsize 计算需要的 buffer size, notify_offset
-        uint32 vsize = virtio_vring_size(qsize);
-        printf("queue[%d] qsize: %d, vsize: 0x%x, notify_off: 0x%08x\n", i, qsize, vsize, notify_off);
-    }
-    // 获取 device 支持的 features
-    uint64 features = virtio_pci_get_device_features(hw);
-    printf("features: 0x%016llx\n", features);
-}
-
-int virtio_pci_setup_queue(virtio_pci_hw_t *hw, struct vring *vr)
-{
-    uint16 notify_off;
-    uint32 desc_addr, avail_addr, used_addr;
-    struct virtio_pci_common_cfg *cfg = hw->common_cfg;
-
-	desc_addr = (uint64)vr->desc;
-	avail_addr = (uint64)vr->avail;
-	used_addr = (uint64)vr->used;
-
-    PCI_REG32(&cfg->queue_select) = vr->qid;
-    PCI_REG64(&cfg->queue_desc) = desc_addr;
-    PCI_REG64(&cfg->queue_driver) = avail_addr;
-    PCI_REG64(&cfg->queue_device) = used_addr;
-
-    notify_off = PCI_REG16(&cfg->queue_notify_off);
-    vr->notify_addr = (void *)((uint8 *)hw->notify_cfg +
-				notify_off * hw->notify_off_multiplier);
-
-    PCI_REG16(&cfg->queue_enable) = 1;
-
-	printf("queue %u addresses:\n", vr->qid);
-	printf("\t desc_addr: 0x%08x\n", desc_addr);
-	printf("\t aval_addr: 0x%08x\n", avail_addr);
-	printf("\t used_addr: 0x%08x\n", used_addr);
-	printf("\t notify addr: %p (notify offset: %u)\n",
-		vr->notify_addr, notify_off);
-
-	return 0;
-}
+#endif
