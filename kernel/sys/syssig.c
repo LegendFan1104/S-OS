@@ -113,14 +113,19 @@ uint64 sys_rt_sigsuspend(void) {
     oldmask = p->block;
     p->block = mask;
 
-    // Wait until a signal arrives
-    while (p->pending.val == 0) {
+    // Wait until a signal arrives.
+    // sleep1 handles lk == &p->lock (sleep would reacquire+release the same lock
+    // leaving it freed before sched(), causing a panic).
+    acquire(&p->lock);
+    while (p->pending.val == 0 && p->signal == 0) {
         if (killed(p)) {
+            release(&p->lock);
             p->block = oldmask;
             return -4;  // EINTR
         }
-        sleep(p, &p->lock);
+        sleep1(p, 0, &p->lock);
     }
+    release(&p->lock);
 
     p->block = oldmask;
     return -4;  // Always return EINTR after signal
