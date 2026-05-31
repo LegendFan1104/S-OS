@@ -1,16 +1,6 @@
-//
-// Created by Li shuang ( pseudonym ) on 2024-04-05 
-// --------------------------------------------------------------
-// | Note: This code file just for study, not for commercial use 
-// | Contact Author: lishuang.mk@whu.edu.cn 
-// --------------------------------------------------------------
-//
-
 # code to switch between user and kernel space.
-
 # kernel.ld causes this to be aligned
 # to a page boundary.
-#
 
 #include "la_asm.h"
 
