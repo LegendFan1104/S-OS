@@ -873,7 +873,7 @@ void test_iozone()
     printf("#### OS COMP TEST GROUP START iozone-glibc ####\n");
     printf("run iozone_testcode.sh\n");
 
-    for (int i = 0; i < 4; i++)  // 跳过 stride-read 及之后
+    for (int i = 0; i < 7; i++)  // 跳过 stride-read 及之后
     {
         printf("iozone %s measurements\n", iozone_names[i]);
         pid = fork();
