@@ -138,13 +138,13 @@ int init_main()
 }
 void run_all()
 {
-    //test_basic();
-    //test_busybox();
-    //test_lua();
+    test_basic();
+    test_busybox();
+    test_lua();
     test_sh();
     //test_libc_all();
-    //test_libcbench();
-    //test_iozone();
+    test_libcbench();
+    test_iozone();
     //test_lmbench();
 }
 
@@ -873,7 +873,7 @@ void test_iozone()
     printf("#### OS COMP TEST GROUP START iozone-glibc ####\n");
     printf("run iozone_testcode.sh\n");
 
-    for (int i = 0; i < 6; i++)  // 跳过 pwrite/pread 及之后
+    for (int i = 0; i < 4; i++)  // 跳过 stride-read 及之后
     {
         printf("iozone %s measurements\n", iozone_names[i]);
         pid = fork();
@@ -892,7 +892,7 @@ void test_iozone()
     printf("#### OS COMP TEST GROUP START iozone-musl ####\n");
     printf("run iozone_testcode.sh\n");
 
-    for (int i = 0; i < 6; i++)  // 跳过 pwrite/pread 及之后
+    for (int i = 0; i < 4; i++)  // 跳过 stride-read 及之后
     {
         printf("iozone %s measurements\n", iozone_names[i]);
         pid = fork();
