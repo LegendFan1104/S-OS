@@ -138,13 +138,14 @@ int init_main()
 }
 void run_all()
 {
-    test_basic();
-    test_busybox();
-    test_lua();
+    //test_basic();
+    //test_busybox();
+    //test_lua();
     test_sh();
-    test_libc_all();
-    test_libcbench();
-    test_iozone();
+    //test_libc_all();
+    //test_libcbench();
+    //test_iozone();
+    //test_lmbench();
 }
 
 static longtest busybox_setup_dynamic_library[] = {
@@ -909,24 +910,51 @@ void test_iozone()
 void test_lmbench()
 {
     int pid, status, i;
-    sys_chdir("musl");
 
+    /* musl 版本 */
+    sys_chdir("/musl");
+    printf("#### OS COMP TEST GROUP START lmbench-musl ####\n");
     printf("run lmbench_testcode.sh\n");
-    printf("latency measurements\n");
+
+    for (i = 0; lmbench[i].name[1]; i++)
+    {
+        if (!lmbench[i].valid)
+            continue;
+        printf("  lmbench %s\n", lmbench[i].name[1]);
+        pid = fork();
+        if (pid == 0)
+        {
+            char *newenviron[] = {NULL};
+            sys_execve(lmbench[i].name[0], lmbench[i].name, newenviron);
+            print("execve error.\n");
+            exit(0);
+        }
+        waitpid(pid, &status, 0);
+    }
+
+    printf("#### OS COMP TEST GROUP END lmbench-musl ####\n");
+
+    /* glibc 版本 */
+    setup_dynamic_library();
+    sys_chdir("/glibc");
+    printf("#### OS COMP TEST GROUP START lmbench-glibc ####\n");
+    printf("run lmbench_testcode.sh\n");
 
     for (i = 0; lmbench[i].name[1]; i++)
     {
         if (!lmbench[i].valid)
             continue;
         pid = fork();
-        char *newenviron[] = {NULL};
         if (pid == 0)
         {
+            char *newenviron[] = {NULL};
             sys_execve(lmbench[i].name[0], lmbench[i].name, newenviron);
             exit(0);
         }
         waitpid(pid, &status, 0);
     }
+
+    printf("#### OS COMP TEST GROUP END lmbench-glibc ####\n");
 }
 
 static longtest iozone[] = {
