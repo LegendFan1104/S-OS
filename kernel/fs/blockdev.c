@@ -4,6 +4,7 @@
 #include "defs.h"
 #include "container_of.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
 
@@ -29,8 +30,8 @@ static int blockdev_write(struct ext4_blockdev *bdev, const void *buf, uint64_t 
 
 static int blockdev_close(struct ext4_blockdev *bdev);
 
-/* 物理块设备锁 */
-// static struct spinlock bdev_lock; 
+/* 物理块设备锁 — 使用 sleeplock 以允许磁盘 I/O 期间响应中断 */
+static struct sleeplock bdev_lock;
 
 /* 物理块设备接口 */
 
@@ -56,7 +57,7 @@ vfs_ext4_blockdev_init(struct vfs_ext4_blockdev *vbdev, int dev)
     struct ext4_blockdev *bd = NULL;
     struct ext4_blockdev_iface *iface = &biface;
 
-    if (vbdev) 
+    if (vbdev)
     {
         vbdev->dev = dev;
 
@@ -66,7 +67,7 @@ vfs_ext4_blockdev_init(struct vfs_ext4_blockdev *vbdev, int dev)
 
         /* TODO: 这里的分区大小是 512*8*1024*1024 = 4GB，未来可能会更改 */
         bd -> part_size = (uint64) 512 * 8 *1024 * 1024;
-        
+
         ph_bbuf = &vbdev -> ph_bbuf[0];
 
         iface -> lock = blockdev_lock;
@@ -79,6 +80,9 @@ vfs_ext4_blockdev_init(struct vfs_ext4_blockdev *vbdev, int dev)
         iface -> ph_bsize = BSIZE;
         iface -> ph_bbuf = ph_bbuf;
         iface -> ph_bcnt = bd -> part_size / (uint64) bd -> bdif -> ph_bsize;
+
+        /* 初始化块设备锁 */
+        initsleeplock(&bdev_lock, "bdev_lock");
 #if DEBUG
         printf("vfs_ext4_blockdev_init: part_size = %d, ph_bsize = %d, ph_bcnt = %d\n",
               bd -> part_size, iface->ph_bsize, iface->ph_bcnt);
@@ -139,25 +143,23 @@ vfs_ext4_blockdev_destroy(struct vfs_ext4_blockdev *vbdev)
  * @param bdev 
  * @return int 
  */
-static int 
-blockdev_lock(struct ext4_blockdev *bdev) 
+static int
+blockdev_lock(struct ext4_blockdev *bdev)
 {
-    // acquire(&bdev_lock);
+    acquiresleep(&bdev_lock);
     return EOK;
 }
 
 /**
  * @brief 对物理块设备解锁
- * 
- * @todo 没实现
- * 
- * @param bdev 
- * @return int 
+ *
+ * @param bdev
+ * @return int
  */
-static int 
-blockdev_unlock(struct ext4_blockdev *bdev) 
+static int
+blockdev_unlock(struct ext4_blockdev *bdev)
 {
-    // release(&bdev_lock);
+    releasesleep(&bdev_lock);
     return EOK;
 }
 
