@@ -629,19 +629,24 @@ int free_vma_list(struct proc *p)
     struct vma *vma = vma_head->next;
     while (vma != vma_head)
     {
-        uint64 a;
-        pte_t *pte;
-        for (a = vma->addr; a < vma->end; a += PGSIZE)
+        /* SHARE 类型的 VMA 物理页由多个进程共享，不能在此释放。
+         * 共享内存页的生命周期由 shmctl(IPC_RMID) 管理。 */
+        if (vma->type != SHARE)
         {
-            if ((pte = walk(p->pagetable, a, 0)) == NULL)
-                continue;
-            if ((*pte & PTE_V) == 0)
-                continue;
-            if (PTE_FLAGS(*pte) == PTE_V)
-                continue;
-            uint64 pa = PTE2PA(*pte) | dmwin_win0;
-            pmem_free_pages((void *)pa, 1);
-            *pte = 0;
+            uint64 a;
+            pte_t *pte;
+            for (a = vma->addr; a < vma->end; a += PGSIZE)
+            {
+                if ((pte = walk(p->pagetable, a, 0)) == NULL)
+                    continue;
+                if ((*pte & PTE_V) == 0)
+                    continue;
+                if (PTE_FLAGS(*pte) == PTE_V)
+                    continue;
+                uint64 pa = PTE2PA(*pte) | dmwin_win0;
+                pmem_free_pages((void *)pa, 1);
+                *pte = 0;
+            }
         }
         vma = vma->next;
         pmem_free_pages(vma->prev, 1);

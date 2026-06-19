@@ -98,12 +98,15 @@
 // libcbench调用
 #define SYS_madvise     233
 
-//iozone 调用
+// iozone 调用
 #define SYS_sync        81
 #define SYS_ftruncate   46
 #define SYS_fsync       82
 #define SYS_fdatasync   83
-#define SYS_shmget      194 
+#define SYS_semget      190
+#define SYS_semctl      191
+#define SYS_semtimedop  192
+#define SYS_shmget      194
 #define SYS_shmctl      195
 #define SYS_shmat       196
 #define SYS_pselect6_time32 72
@@ -217,8 +220,11 @@ static inline const char* get_syscall_name(int num)
         case SYS_mremap         : return "mremap";
         case SYS_clone3         : return "clone3";
         case SYS_shmget         : return "shmget";
-        case SYS_shmat          : return "shmat";  
+        case SYS_shmat          : return "shmat";
         case SYS_shmctl         : return "shmctl";
+        case SYS_semget         : return "semget";
+        case SYS_semctl         : return "semctl";
+        case SYS_semtimedop     : return "semtimedop";
         case SYS_pselect6_time32: return "pselect6_time32 ";
         default: return "unknown";
     }
