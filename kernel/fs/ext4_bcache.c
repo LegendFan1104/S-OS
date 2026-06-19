@@ -141,15 +141,17 @@ static struct ext4_buf *ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba) {
 struct ext4_buf *ext4_buf_lowest_lru(struct ext4_bcache *bc) { return RB_MIN(ext4_buf_lru, &bc->lru_root); }
 
 void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf) {
-    /* Warn on dropping any referenced buffers.*/
+    /* Do NOT drop a buffer that is still referenced —
+     * doing so would cause use-after-free for whoever holds the reference. */
     if (buf->refctr) {
         ext4_dbg(DEBUG_BCACHE,
-                 DBG_WARN "Buffer is still referenced. "
+                 DBG_WARN "Buffer is still referenced, not dropping. "
                           "lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
                  buf->lba, buf->refctr);
-    } else
-        RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
+        return;
+    }
 
+    RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
     RB_REMOVE(ext4_buf_lba, &bc->lba_root, buf);
 
     /*Forcibly drop dirty buffer.*/

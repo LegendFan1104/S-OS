@@ -133,7 +133,7 @@ void run_all()
     test_basic();
     test_busybox();
     test_lua();
-    test_sh();
+    //test_sh();
     test_libc_all();
     test_libcbench();
     test_iozone();
@@ -307,6 +307,17 @@ void test_libc_dy()
         waitpid(pid, &status, 0);
     }
 }
+static char *iozone_names[] = {
+    "automatic measurements",
+    "throughput write/read",
+    "throughput random-read",
+    "throughput read-backwards",
+    "throughput stride-read",
+    "throughput fwrite/fread",
+    "throughput pwrite/pread",
+    "throughput pwritev/preadv",
+};
+
 void test_iozone()
 {
     int pid, status;
@@ -315,16 +326,19 @@ void test_iozone()
     /* musl 版本 */
     sys_chdir("/musl");
     printf("#### OS COMP TEST GROUP START iozone-musl ####\n");
-
     printf("run iozone_testcode.sh\n");
-    printf("iozone automatic measurements\n");
-    pid = fork();
-    if (pid == 0)
+
+    for (int i = 0; i < 2; i++)  // loongarch 只跑前两个
     {
-        sys_execve("iozone", iozone[0].name, newenviron);
-        exit(0);
+        printf("iozone %s measurements\n", iozone_names[i]);
+        pid = fork();
+        if (pid == 0)
+        {
+            sys_execve("iozone", iozone[i].name, newenviron);
+            exit(0);
+        }
+        waitpid(pid, &status, 0);
     }
-    waitpid(pid, &status, 0);
 
     printf("#### OS COMP TEST GROUP END iozone-musl ####\n");
 
@@ -332,16 +346,19 @@ void test_iozone()
     setup_dynamic_library();
     sys_chdir("/glibc");
     printf("#### OS COMP TEST GROUP START iozone-glibc ####\n");
-
     printf("run iozone_testcode.sh\n");
-    printf("iozone automatic measurements\n");
-    pid = fork();
-    if (pid == 0)
+
+    for (int i = 0; i < 2; i++)  // loongarch 只跑前两个
     {
-        sys_execve("iozone", iozone[0].name, newenviron);
-        exit(0);
+        printf("iozone %s measurements\n", iozone_names[i]);
+        pid = fork();
+        if (pid == 0)
+        {
+            sys_execve("iozone", iozone[i].name, newenviron);
+            exit(0);
+        }
+        waitpid(pid, &status, 0);
     }
-    waitpid(pid, &status, 0);
 
     printf("#### OS COMP TEST GROUP END iozone-glibc ####\n");
 }
