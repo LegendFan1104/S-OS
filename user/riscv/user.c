@@ -142,9 +142,9 @@ void run_all()
     test_busybox();
     test_lua();
     test_sh();
-    // test_libc_all();
+    test_libc_all();
     test_libcbench();
-    // test_iozone();
+    test_iozone();
 }
 
 static longtest busybox_setup_dynamic_library[] = {
@@ -298,7 +298,7 @@ void test_lua()
             printf("testcase lua %s success\n", lua[i].name[1]);
         }
     }
-    printf("#### OS COMP TEST GROUP END lua-musl ####");
+    printf("#### OS COMP TEST GROUP END lua-musl ####\n");
 }
 static longtest lua[] = {
     {1, {"./lua", "date.lua", 0}},
@@ -852,21 +852,14 @@ void test_libcbench()
 
 void test_iozone()
 {
-    setup_dynamic_library();
     int pid, status;
-    sys_chdir("/glibc");
-    // sys_chdir("/musl");
-    printf("run iozone_testcode.sh\n");
     char *newenviron[] = {NULL};
-    // printf("iozone automatic measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[0].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
 
+    /* musl 版本 */
+    sys_chdir("/musl");
+    printf("#### OS COMP TEST GROUP START iozone-musl ####\n");
+
+    printf("run iozone_testcode.sh\n");
     printf("iozone throughput write/read measurements\n");
     pid = fork();
     if (pid == 0)
@@ -876,59 +869,24 @@ void test_iozone()
     }
     waitpid(pid, &status, 0);
 
-    // printf("iozone throughput random-read measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[2].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("#### OS COMP TEST GROUP END iozone-musl ####\n");
 
-    // printf("iozone throughput read-backwards measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[3].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    /* glibc 版本 */
+    setup_dynamic_library();
+    sys_chdir("/glibc");
+    printf("#### OS COMP TEST GROUP START iozone-glibc ####\n");
 
-    // printf("iozone throughput stride-read measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[4].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("run iozone_testcode.sh\n");
+    printf("iozone throughput write/read measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[1].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput fwrite/fread measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[5].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
-
-    // printf("iozone throughput pwrite/pread measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[6].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
-
-    // printf("iozone throughput pwritev/preadv measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[7].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("#### OS COMP TEST GROUP END iozone-glibc ####\n");
 }
 
 void test_lmbench()
@@ -1077,89 +1035,6 @@ void test_basic()
     printf("#### OS COMP TEST GROUP END basic-musl ####\n");
 }
 
-// int stack[1024] = {0};
-// static int child_pid;
-// static int child_func()
-// {
-//     print("  Child says successfully!\n");
-//     return 0;
-// }
-
-// void test_clone(void)
-// {
-//     int wstatus;
-//     child_pid = clone(child_func, NULL, stack, 1024, SIGCHLD);
-//     if (child_pid == 0)
-//     {
-//         exit(0);
-//     }
-//     else
-//     {
-//         if (wait(&wstatus) == child_pid)
-//             print("clone process successfully.\npid:\n");
-//         else
-//             print("clone process error.\n");
-//     }
-// }
-
-// char getdents_buf[512];
-// void test_getdents()
-// { //< 看描述sys_getdents64只获取目录自身的信息，比ls简单
-//     int fd, nread;
-//     struct linux_dirent64 *dirp64;
-//     dirp64 = (struct linux_dirent64 *)getdents_buf;
-//     // fd = open(".", O_DIRECTORY); //< 测例中本来就注释掉了
-//     fd = open(".", O_RDONLY);
-//     printf("open fd:%d\n", fd);
-
-//     nread = sys_getdents64(fd, dirp64, 512);
-//     printf("getdents fd:%d\n", nread); //< 好令人困惑的写法，是指文件描述符？应该是返回的长度
-//     // assert(nread != -1);
-//     printf("getdents success.\n%s\n", dirp64->d_name);
-//     /*下面一行是我测试用的*/
-//     // printf("inode: %d, type: %d, reclen: %d\n",dirp64->d_ino,dirp64->d_type,dirp64->d_reclen);
-
-//     /*
-//     下面是测例注释掉的，看来是为了降低难度，不需要显示一个目录下的所有文件
-//     不过我们内核的list_file已经实现了
-//     */
-//     /*
-//     for(int bpos = 0; bpos < nread;){
-//         d = (struct dirent *)(buf + bpos);
-//         printf(  "%s\t", d->d_name);
-//         bpos += d->d_reclen;
-//     }
-//     */
-
-//     printf("\n");
-//     sys_close(fd);
-// }
-
-// // static char buffer[30];
-// void test_chdir()
-// {
-//     mkdir("test_chdir", 0666); //< mkdir使用相对路径, sys_mkdirat可以是相对也可以是绝对
-//     //< 先做mkdir
-//     int ret = sys_chdir("test_chdir");
-//     printf("chdir ret: %d\n", ret);
-//     // assert(ret == 0); 初赛测例用了assert
-//     char buffer[30];
-//     sys_getcwd(buffer, 30);
-//     printf("  current working dir : %s\n", buffer);
-// }
-
-// void test_getcwd()
-// {
-//     char *cwd = NULL;
-//     char buf[128]; //= {0}; //<不初始化也可以，虽然比赛测例初始化buf了，但是我们这样做会缺memset函数报错，无所谓了
-//     cwd = sys_getcwd(buf, 128);
-//     if (cwd != NULL)
-//         printf("getcwd: %s successfully!\n", buf);
-//     else
-//         printf("getcwd ERROR.\n");
-//     // sys_getcwd(NULL,128); 这两个是我为了测试加的，测例并无
-//     // sys_getcwd(buf,0);
-// }
 
 void exe(char *path)
 {
@@ -1186,259 +1061,7 @@ void exe(char *path)
     }
 }
 
-// void test_execve()
-// {
-//     int pid = fork();
-//     if (pid < 0)
-//     {
-//         print("fork failed\n");
-//     }
-//     else if (pid == 0)
-//     {
-//         // 子进程
 
-//         char *newargv[] = {"/glibc/basic/mount", NULL};
-//         char *newenviron[] = {NULL};
-//         sys_execve("/glibc/basic/mount", newargv, newenviron);
-//         print("execve error.\n");
-//         exit(1);
-//     }
-//     else
-//     {
-//         int status;
-//         wait(&status);
-//         print("child process is over\n");
-//     }
-// }
-
-// void test_write()
-// {
-//     const char *str = "Hello operating system contest.\n";
-//     int str_len = strlen(str);
-//     int reallylen = write(1, str, str_len);
-//     if (reallylen != str_len)
-//     {
-//         print("write error.\n");
-//     }
-//     else
-//     {
-//         print("write success.\n");
-//     }
-// }
-
-// void test_fork()
-// {
-//     int pid = fork();
-//     if (pid < 0)
-//     {
-//         // fork失败
-//         print("fork failed\n");
-//     }
-//     else if (pid == 0)
-//     {
-//         // 子进程
-//         pid_t ppid = getppid();
-//         if (ppid > 0)
-//             print("getppid success. ppid");
-//         else
-//             print("  getppid error.\n");
-//         print("child process\n");
-//         exit(1);
-//     }
-//     else
-//     {
-//         // 父进程
-//         print("parent process is waiting\n");
-//         int status;
-//         wait(&status);
-//         print("child process is over\n");
-//     }
-// }
-
-// void test_open()
-// {
-//     // O_RDONLY = 0, O_WRONLY = 1
-//     int fd = open("./text.txt", 0);
-//     char buf[256];
-//     int size = sys_read(fd, buf, 256);
-//     if (size < 0)
-//     {
-//         size = 0;
-//     }
-//     write(stdout, buf, size);
-//     sys_close(fd);
-// }
-
-// void test_openat(void)
-// {
-//     // int fd_dir = open(".", O_RDONLY | O_CREATE);
-//     int fd_dir = open("./mnt", O_DIRECTORY);
-//     print("open dir fd: \n");
-//     int fd = openat(fd_dir, "test_openat.txt", O_CREATE | O_RDWR);
-//     print("openat fd: \n");
-//     print("openat success");
-//     /*(
-//     char buf[256] = "openat text file";
-//     write(fd, buf, strlen(buf));
-//     int size = read(fd, buf, 256);
-//     if (size > 0) printf("  openat success.\n");
-//     else printf("  openat error.\n");
-//     */
-//     sys_close(fd);
-// }
-
-// static struct kstat kst;
-// void test_fstat()
-// {
-//     int fd = open("./text.txt", 0);
-//     int ret = sys_fstat(fd, &kst);
-//     ret++;
-//     print("fstat ret: \n");
-//     // printf("fstat: dev: %d, inode: %d, mode: %d, nlink: %d, size: %d, atime: %d, mtime: %d, ctime: %d\n",
-//     //    kst.st_dev, kst.st_ino, kst.st_mode, kst.st_nlink, kst.st_size, kst.st_atime_sec, kst.st_mtime_sec, kst.st_ctime_sec);
-// }
-
-// void test_mmap(void)
-// {
-//     char *array;
-//     const char *str = "Hello, mmap successfully!";
-//     int fd;
-
-//     fd = open("test_mmap.txt", O_RDWR | O_CREATE);
-//     write(fd, str, strlen(str));
-//     sys_fstat(fd, &kst);
-//     // printf("file len: %d\n", kst.st_size);
-//     array = sys_mmap(NULL, kst.st_size, PROT_WRITE | PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
-//     // printf("return array: %x\n", array);
-
-//     if (array == MAP_FAILED)
-//     {
-//         print("mmap error.\n");
-//     }
-//     else
-//     {
-//         printf("mmap content: %s\n", str);
-//         // munmap(array, kst.st_size);
-//     }
-
-//     sys_close(fd);
-// }
-
-// int i = 1000;
-// void test_waitpid(void)
-// {
-//     int cpid, wstatus;
-//     cpid = fork();
-//     if (cpid != -1)
-//     {
-//         print("fork test Success!\n");
-//     };
-//     if (cpid == 0)
-//     {
-//         while (i--)
-//             ;
-//         sys_sched_yield();
-//         print("This is child process\n");
-//         exit(3);
-//     }
-//     else
-//     {
-//         pid_t ret = waitpid(cpid, &wstatus, 0);
-//         if (ret == cpid && WEXITSTATUS(wstatus) == 3)
-//         {
-//             print("waitpid test Success!\n");
-//         }
-//         else
-//             print("waitpid error.\n");
-//     }
-// }
-// void test_wait(void)
-// {
-//     int cpid, wstatus;
-//     cpid = fork();
-//     if (cpid == 0)
-//     {
-//         print("This is child process\n");
-//         exit(0);
-//     }
-//     else
-//     {
-//         pid_t ret = wait(&wstatus);
-//         if (ret == cpid)
-//             print("wait child success.\n");
-//         else
-//             print("wait child error.\n");
-//     }
-// }
-
-// void test_gettime()
-// {
-//     int test_ret1 = get_time();
-//     // volatile int i = 100000; // qemu时钟频率12500000
-//     // while (i > 0)
-//     //     i--;
-//     sleep(2);
-//     int test_ret2 = get_time();
-//     if (test_ret1 >= 0 && test_ret2 >= 0)
-//     {
-//         print("get_time test success\n");
-//     }
-// }
-
-// // void test_write()
-// // {
-// //     char *str = "user program write\n";
-// //     write(0, str, 20);
-// //     char *str1 = "第二次调用write,来自user\n";
-// //     write(0, str1, 33);
-// // }
-
-// void test_brk()
-// {
-//     int64 cur_pos, alloc_pos, alloc_pos_1;
-
-//     cur_pos = sys_brk(0);
-//     sys_brk((void *)(cur_pos + 2 * 4006));
-
-//     alloc_pos = sys_brk(0);
-//     sys_brk((void *)(alloc_pos + 2 * 4006));
-
-//     alloc_pos_1 = sys_brk(0);
-//     alloc_pos_1++;
-// }
-// struct tms mytimes;
-// void test_times()
-// {
-
-//     for (int i = 0; i < 1000000; i++)
-//     {
-//     }
-//     uint64 test_ret = sys_times(&mytimes);
-//     mytimes.tms_cstime++;
-//     if (test_ret == 0)
-//     {
-//         print("test_times Success!");
-//     }
-//     else
-//     {
-//         print("test_times Failed!");
-//     }
-// }
-
-// struct utsname un;
-// void test_uname()
-// {
-//     int test_ret = sys_uname(&un);
-
-//     if (test_ret >= 0)
-//     {
-//         print("test_uname Success!");
-//     }
-//     else
-//     {
-//         print("test_uname Failed!");
-//     }
-// }
 
 #include "def.h"
 #include <stdarg.h>
@@ -1448,16 +1071,6 @@ static int out(int f, const char *s, size_t l)
 {
     write(f, s, l);
     return 0;
-    // int len = 0;
-    // if (buffer_lock_enabled == 1) {
-    // 	// for multiple threads io
-    // 	mutex_lock(buffer_lock);
-    // 	len = out_unlocked(s, l);
-    // 	mutex_unlock(buffer_lock);
-    // } else {
-    // 	len = out_unlocked(s, l);
-    // }
-    // return len;
 }
 
 int putchar(int c)

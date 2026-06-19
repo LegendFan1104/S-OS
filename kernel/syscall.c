@@ -1880,24 +1880,55 @@ uint64 sys_clock_nanosleep(int which_clock,
                            uint64 *rqtp,
                            uint64 *rmtp)
 {
-//< [sys_clock_nanosleep]which_clock: 0, flags: 0, rqtp: 0x000000007fffeb48, rmtp: 0x000000007fffeb48
-#if DEBUG
-    LOG("[sys_clock_nanosleep]which_clock: %d, flags: %d, rqtp: %p, rmtp: %p\n", which_clock, flags, rqtp, rmtp);
-#endif
     struct __kernel_timespec kernel_request_tp; //< 栈上分配空间
     struct __kernel_timespec kernel_remain_tp;
-    copyin(myproc()->pagetable, (char *)&kernel_request_tp, (uint64)rqtp, sizeof(struct __kernel_timespec)); //< 读入睡眠时间
 
-//< kernel_request_tp, second: 7fffffff, nanosecond: 0
-#if DEBUG
-    LOG("kernel_request_tp, second: %x, nanosecond: %x\n", kernel_request_tp.tv_sec, kernel_request_tp.tv_nsec);
-#endif
-    kernel_remain_tp.tv_sec = 0;
-    kernel_remain_tp.tv_nsec = 0;
-    copyout(myproc()->pagetable, (uint64)rmtp, (char *)&kernel_remain_tp, sizeof(struct __kernel_timespec));
-    // copyin(myproc()->pagetable,(char *)&kernel_request_tp,(uint64)rqtp,sizeof(struct __kernel_timespec)); //< 写入rmtp成功了
-    // LOG("kernel_request_tp, second: %x, nanosecond: %x\n",kernel_request_tp.tv_sec,kernel_request_tp.tv_nsec);
-    exit(0); //< 直接退出。不知道为什么sleep一直请求sys_clock_nanosleep
+    if (copyin(myproc()->pagetable, (char *)&kernel_request_tp, (uint64)rqtp, sizeof(struct __kernel_timespec)) < 0)
+        return -1;
+
+    DEBUG_LOG_LEVEL(LOG_DEBUG, "[sys_clock_nanosleep]which_clock: %d, flags: %d, rqtp: %p, rmtp: %p\n",
+                    which_clock, flags, rqtp, rmtp);
+    DEBUG_LOG_LEVEL(LOG_DEBUG, "kernel_request_tp, second: %x, nanosecond: %x\n",
+                    kernel_request_tp.tv_sec, kernel_request_tp.tv_nsec);
+
+    /* 将 timespec 转为微秒，使用 timeval 风格的 sleep */
+    timeval_t wait;
+    wait.sec = kernel_request_tp.tv_sec;
+    wait.usec = kernel_request_tp.tv_nsec / 1000;
+    if (wait.usec == 0 && wait.sec == 0)
+    {
+        /* 0 睡眠时间：直接返回 */
+        goto done;
+    }
+
+    timeval_t start, end;
+    start = timer_get_time();
+    acquire(&tickslock);
+    while (1)
+    {
+        end = timer_get_time();
+        uint64 elapsed_us = (end.sec - start.sec) * 1000000UL + (end.usec - start.usec);
+        uint64 target_us = wait.sec * 1000000UL + wait.usec;
+        if (elapsed_us >= target_us)
+            break;
+        if (myproc()->killed)
+        {
+            release(&tickslock);
+            return -1;
+        }
+        sleep_on_chan(&ticks, &tickslock);
+    }
+    release(&tickslock);
+
+done:
+    /* 写入剩余时间 (0 表示已完成) */
+    if (rmtp)
+    {
+        kernel_remain_tp.tv_sec = 0;
+        kernel_remain_tp.tv_nsec = 0;
+        if (copyout(myproc()->pagetable, (uint64)rmtp, (char *)&kernel_remain_tp, sizeof(struct __kernel_timespec)) < 0)
+            return -1;
+    }
     return 0;
 }
 /**
@@ -1935,8 +1966,11 @@ sys_futex(uint64 uaddr, int op, uint32 val, uint64 utime, uint64 uaddr2, uint32 
         }
         if (userVal != val)
             return -1;
-        /* 单线程进程无超时等待：没有其他线程会futex_wake，直接修改futex word让调用者退出循环 */
-        if (p->thread_num <= 1 && utime == 0)
+        /* 单线程进程无超时等待：没有其他线程会futex_wake，直接修改futex word让调用者退出循环。
+         * 但如果 futex 地址位于共享内存区域(0x60000000)，则可能有其他进程负责唤醒，不能走快速路径。 */
+        int in_shm_region = (uaddr >= 0x60000000UL &&
+                             uaddr < 0x60000000UL + p->shm_size);
+        if (p->thread_num <= 1 && utime == 0 && !in_shm_region)
         {
             userVal = 0;
             copyout(p->pagetable, uaddr, (char *)&userVal, sizeof(int));
@@ -2664,6 +2698,186 @@ uint64 sys_getrusage(int who, uint64 addr)
     return 0;
 }
 
+/* ================================================================
+ *  SysV 信号量实现 — 用于 iozone 等多进程同步场景
+ * ================================================================ */
+
+#define MAX_SEM_SETS     64       /* 最大信号量集数量 */
+#define MAX_SEMS_PER_SET 16       /* 每个集合最多信号量数 */
+
+static struct sem_set {
+    int valid;
+    int semid;
+    int nsems;
+    int values[MAX_SEMS_PER_SET];
+    spinlock_t lock;
+} sem_sets[MAX_SEM_SETS];
+
+static int next_semid = 1;
+
+static void sem_init(void)
+{
+    static int inited = 0;
+    if (inited) return;
+    for (int i = 0; i < MAX_SEM_SETS; i++)
+        sem_sets[i].valid = 0;
+    inited = 1;
+}
+
+uint64 sys_semget(uint64 key, int nsems, int flag)
+{
+    sem_init();
+    LOG_LEVEL(LOG_INFO, "[sys_semget]key: %x, nsems: %d, flag: %x\n", key, nsems, flag);
+
+    if (nsems < 0 || nsems > MAX_SEMS_PER_SET)
+        return -EINVAL;
+
+    if (key == 0 || (flag & 0x200)) /* IPC_PRIVATE or IPC_CREAT */
+    {
+        for (int i = 0; i < MAX_SEM_SETS; i++)
+        {
+            if (!sem_sets[i].valid)
+            {
+                acquire(&sem_sets[i].lock);
+                sem_sets[i].valid = 1;
+                sem_sets[i].semid = next_semid++;
+                sem_sets[i].nsems = nsems;
+                for (int j = 0; j < nsems; j++)
+                    sem_sets[i].values[j] = 0;
+                release(&sem_sets[i].lock);
+                LOG_LEVEL(LOG_INFO, "[sys_semget]new set semid=%d, nsems=%d\n",
+                          sem_sets[i].semid, nsems);
+                return sem_sets[i].semid;
+            }
+        }
+        return -ENOSPC;
+    }
+
+    panic("[sys_semget]key != 0: %d\n", key);
+    return -1;
+}
+
+uint64 sys_semctl(uint64 semid, int semnum, int cmd, uint64 buf)
+{
+    LOG_LEVEL(LOG_INFO, "[sys_semctl]semid: %d, semnum: %d, cmd: %d, buf: %x\n",
+              semid, semnum, cmd, buf);
+
+    for (int i = 0; i < MAX_SEM_SETS; i++)
+    {
+        if (sem_sets[i].valid && sem_sets[i].semid == (int)semid)
+        {
+            acquire(&sem_sets[i].lock);
+
+            if (semnum < 0 || semnum >= sem_sets[i].nsems)
+            {
+                release(&sem_sets[i].lock);
+                return -EINVAL;
+            }
+
+            switch (cmd)
+            {
+            case 0:  /* IPC_RMID */
+                sem_sets[i].valid = 0;
+                release(&sem_sets[i].lock);
+                return 0;
+            case 16: /* SETVAL */
+                sem_sets[i].values[semnum] = (int)buf;
+                release(&sem_sets[i].lock);
+                return 0;
+            case 12: /* GETVAL */
+            {
+                int val = sem_sets[i].values[semnum];
+                release(&sem_sets[i].lock);
+                return val;
+            }
+            case 2:  /* IPC_STAT */
+                release(&sem_sets[i].lock);
+                return 0;
+            default:
+                release(&sem_sets[i].lock);
+                LOG_LEVEL(LOG_WARNING, "[sys_semctl]unsupported cmd: %d\n", cmd);
+                return -EINVAL;
+            }
+        }
+    }
+    return -EINVAL;
+}
+
+struct sembuf {
+    unsigned short sem_num;
+    short sem_op;
+    short sem_flg;
+};
+
+uint64 sys_semtimedop(uint64 semid, uint64 sops, uint64 nsops, uint64 timeout)
+{
+    if (nsops > 1)
+    {
+        LOG_LEVEL(LOG_WARNING, "[sys_semtimedop]nsops=%d > 1, partial\n", nsops);
+    }
+
+    int set_idx = -1;
+    for (int i = 0; i < MAX_SEM_SETS; i++)
+    {
+        if (sem_sets[i].valid && sem_sets[i].semid == (int)semid)
+        {
+            set_idx = i;
+            break;
+        }
+    }
+    if (set_idx < 0)
+        return -EINVAL;
+
+    struct sem_set *set = &sem_sets[set_idx];
+
+    struct sembuf sb;
+    if (copyin(myproc()->pagetable, (char *)&sb, sops, sizeof(struct sembuf)) < 0)
+        return -EFAULT;
+
+    LOG_LEVEL(LOG_INFO, "[sys_semtimedop]semid: %d, semnum: %d, op: %d, flg: %x\n",
+              semid, sb.sem_num, sb.sem_op, sb.sem_flg);
+
+    if (sb.sem_num < 0 || sb.sem_num >= set->nsems)
+        return -EINVAL;
+
+    acquire(&set->lock);
+
+    if (sb.sem_op > 0)
+    {
+        set->values[sb.sem_num] += sb.sem_op;
+        LOG_LEVEL(LOG_INFO, "[sys_semtimedop]V op: new val=%d\n",
+                  set->values[sb.sem_num]);
+        wakeup(set);
+        release(&set->lock);
+        return 0;
+    }
+    else if (sb.sem_op < 0)
+    {
+        while (set->values[sb.sem_num] + sb.sem_op < 0)
+        {
+            if (sb.sem_flg & 0x800) /* IPC_NOWAIT */
+            {
+                release(&set->lock);
+                return -EAGAIN;
+            }
+            LOG_LEVEL(LOG_INFO, "[sys_semtimedop]P blocked, val=%d, need=%d\n",
+                      set->values[sb.sem_num], -sb.sem_op);
+            sleep_on_chan(set, &set->lock);
+            acquire(&set->lock);
+        }
+        set->values[sb.sem_num] += sb.sem_op;
+        LOG_LEVEL(LOG_INFO, "[sys_semtimedop]P ok: new val=%d\n",
+                  set->values[sb.sem_num]);
+        release(&set->lock);
+        return 0;
+    }
+    else
+    {
+        release(&set->lock);
+        return 0;
+    }
+}
+
 #define IPC_PRIVATE 0 //key,强制创建新的共享内存段,且该段无法通过其他进程直接复用
 #define IPC_CREAT	0x200 //flag，如果不存在则创建共享内存段。
 /**
@@ -3035,6 +3249,15 @@ void syscall(struct trapframe *trapframe)
     case SYS_getrusage:
         ret = sys_getrusage((int)a[0], (uint64)a[1]);
         break;
+    case SYS_semget:
+        ret = sys_semget((uint64)a[0], (int)a[1], (int)a[2]);
+        break;
+    case SYS_semctl:
+        ret = sys_semctl((uint64)a[0], (int)a[1], (int)a[2], (uint64)a[3]);
+        break;
+    case SYS_semtimedop:
+        ret = sys_semtimedop((uint64)a[0], (uint64)a[1], (uint64)a[2], (uint64)a[3]);
+        break;
     case SYS_shmget:
         ret = sys_shmget((uint64)a[0], (uint64)a[1],(uint64)a[2]);
         break;
@@ -3044,7 +3267,7 @@ void syscall(struct trapframe *trapframe)
     case SYS_shmctl:
         ret = sys_shmctl((uint64)a[0], (uint64)a[1],(uint64)a[2]);
         break;
-        
+
     default:
         ret = -1;
         panic("unknown syscall with a7: %d", a[7]);
