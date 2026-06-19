@@ -783,8 +783,9 @@ uint64 fork(void)
                     /* 子进程入口指向父进程的同一物理页 */
                     *cpte = PA2PTE(parent_pa) | flags;
 
-                    /* 释放 uvmcopy 为子进程创建的私有副本 */
-                    pmem_free_pages((void *)child_old_pa, 1);
+                    /* 释放 uvmcopy 为子进程创建的私有副本。
+                     * child_old_pa 是物理地址, 需转为内核虚拟地址 (LoongArch 上 | dmwin_win0) */
+                    pmem_free_pages((void *)(child_old_pa | dmwin_win0), 1);
                 }
             }
             svma = svma->next;
@@ -796,14 +797,14 @@ uint64 fork(void)
     np->main_thread->state = t_RUNNABLE; ///< 设置主线程状态为可运行
 
     release(&np->lock); ///< 释放 allocproc中加的锁
-    
+
     // 在fork结束时再次诊断伙伴系统状态
     if (debug_buddy)
     {
         printf("=== Fork completed for pid %d, new pid %d ===\n", p->pid, np->pid);
         buddy_safe_check(); // 使用安全的检查函数
     }
-    
+
     DEBUG_LOG_LEVEL(LOG_DEBUG, "fork new proc pid is %d, tid is %d\n", np->pid, np->main_thread->tid);
     return pid;
 }
@@ -886,7 +887,7 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
                     uint64 child_old_pa = PTE2PA(*cpte);
 
                     *cpte = PA2PTE(parent_pa) | flags;
-                    pmem_free_pages((void *)child_old_pa, 1);
+                    pmem_free_pages((void *)(child_old_pa | dmwin_win0), 1);
                 }
             }
             svma = svma->next;
