@@ -140,9 +140,6 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
 {
     proc_t *p = myproc();
     int perm = get_mmapperms(prot);
-    // assert(start == 0, "uvm_mmap: 0");
-    //  assert(flags & MAP_PRIVATE, "uvm_mmap: 1");
-    // len += PGSIZE;
     struct file *f = fd == -1 ? NULL : p->ofile[fd];
 
     if (fd != -1 && f == NULL)
@@ -150,95 +147,73 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
     struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
     if (!(flags & MAP_FIXED))
         start = vma->addr;
-    if (-1 != fd)
-    {
-        int ret = vfs_ext4_lseek(f, offset, SEEK_SET); //< 设置文件位置指针到指定偏移量
-        if (ret < 0)
-        {
-            DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
-            return ret;
-        }
-    }
-    else
-    {
-        return start;
-    }
     if (vma == NULL)
         return -1;
     assert(len, "len is zero!");
-    // /// @todo 逻辑有问题
-    uint64 i;
 
-    //< 特殊处理一下，如果len大于文件大小，就把len减小到文件大小
-    //< !把下面处理len的代码块注释掉，也是可以跑的!
-    // uint64 file_size = 0;
-    // if (fd != -1)
-    // {
-    //     struct ext4_file *efile = (struct ext4_file *)f->f_data.f_vnode.data;
-    //     file_size = efile->fsize; // 实际文件大小
-    // }
-
-    // // 新增：调整映射长度（核心修复）
-    // size_t aligned_len = PGROUNDUP(len);
-    // if (fd != -1 && len > file_size)
-    // {
-    //     // 文件映射：禁止超过文件实际大小
-    //     len = PGROUNDUP(file_size); // 对齐到页边界
-    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Truncate mmap len to file size: 0x%x\n", len);
-    // }
-
-    for (i = 0; i < len; i += PGSIZE) //< 从offset开始读len字节  //< ?为什么la glibc一进来i就是0x8c000
+    if (fd != -1)
     {
-        // LOG_LEVEL(LOG_ERROR,"[mmap] i=%x",i);
-        uint64 pa = experm(p->pagetable, start + i, perm); //< 检查是否可以访问start + i，如果可以就返回start + i所在页的物理地址
-        // assert(pa != 0, "pa is null!,va:%p", start + i);
+        int ret = vfs_ext4_lseek(f, offset, SEEK_SET);
+        if (ret < 0)
+            return ret;
+    }
+
+    uint64 i;
+    for (i = 0; i < len; i += PGSIZE)
+    {
+        /* 确保页表中有映射。MAP_FIXED 落入预留 VMA 时
+         * alloc_vma 不会分配物理页，需要在这里补上。 */
+        uint64 pa = experm(p->pagetable, start + i, perm);
+        if (pa == 0)
+        {
+            if (!uvmalloc1(p->pagetable, start + i, start + i + PGSIZE, perm))
+            {
+                panic("mmap: uvmalloc1 failed");
+                return -1;
+            }
+            pa = experm(p->pagetable, start + i, perm);
+            if (pa == 0)
+            {
+                panic("mmap: page still unmapped after alloc");
+                return -1;
+            }
+        }
+
+        if (fd == -1)
+        {
+            /* 匿名映射：uvmalloc1 已清零，无需额外处理 */
+            continue;
+        }
 
         int remaining = len - i;
         int to_read = (remaining > PGSIZE) ? PGSIZE : remaining;
 
-        // 读取文件内容（如果 to_read > 0）
         int bytes_read = 0;
         if (to_read > 0)
         {
-            // uint64 orig_pos = f->f_pos;
-            // int ret = vfs_ext4_lseek(f,start + i, SEEK_SET); //< 设置文件位置指针到指定偏移量
-            // if (ret < 0)
-            // {
-            //     DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
-            //     return ret;
-            // }
             bytes_read = get_file_ops()->read(f, start + i, to_read);
-            // vfs_ext4_lseek(f, orig_pos, SEEK_SET);
-            // bytes_read = vfs_ext4_readat(f,0,pa,to_read,offset+i); //< read比vfs_ext4_readat好，vfs_ext4_readat如果offset大于size会panic。之后删掉这行吧
             if (bytes_read < 0)
             {
-                // 错误处理（如取消映射并返回）
                 panic("bytes_read null");
                 return -1;
             }
         }
 
-        // 文件内容不足时，填充零
+        /* 文件内容不足时，填充零 */
         if (bytes_read < to_read)
         {
             memset((void *)((pa + bytes_read) | dmwin_win0), 0, to_read - bytes_read);
         }
 
-        // 页面剩余部分清零
+        /* 页面剩余部分清零 */
         if (to_read < PGSIZE)
         {
             memset((void *)((pa + to_read) | dmwin_win0), 0, PGSIZE - to_read);
         }
     }
-    // if (aligned_len > len)
-    // {
-    //     size_t extra_len = aligned_len - len;
-    //     uint64 prot_start = start + len;
-    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Set PROT_NONE for extra pages: 0x%llx-0x%llx\n",
-    //                     prot_start, prot_start + extra_len);
-    //     vm_protect(p->pagetable, prot_start, extra_len, PROT_NONE);
-    // }
-    get_file_ops()->dup(f);
+
+    if (fd != -1)
+        get_file_ops()->dup(f);
     return start;
 }
 
