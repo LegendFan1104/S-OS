@@ -751,6 +751,46 @@ uint64 fork(void)
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
 
+    /* 复制父进程的共享内存段信息 — 共享内存本质上是跨进程的 */
+    for (i = 0; i < MAX_SHAREMEMORY_REGION_NUM; i++)
+        np->sharememory[i] = p->sharememory[i];
+    np->shm_num = p->shm_num;
+    np->shm_size = p->shm_size;
+
+    /* 修复 SHARE 类型的 VMA 映射：uvmcopy 将共享内存页私有化了。
+     * 这里将子进程的 SHARE 页重新映射到父进程的同一物理页，
+     * 使跨进程共享内存真正生效 (iozone 多进程同步依赖此行为)。 */
+    {
+        struct vma *svma = np->vma->next;
+        while (svma != np->vma)
+        {
+            if (svma->type == SHARE && svma->addr != svma->end)
+            {
+                for (uint64 va = svma->addr; va < svma->end; va += PGSIZE)
+                {
+                    pte_t *ppte = walk(p->pagetable, va, 0);
+                    if (ppte == NULL || (*ppte & PTE_V) == 0)
+                        continue;
+
+                    pte_t *cpte = walk(np->pagetable, va, 0);
+                    if (cpte == NULL || (*cpte & PTE_V) == 0)
+                        continue;
+
+                    uint64 parent_pa = PTE2PA(*ppte);
+                    uint64 flags = PTE_FLAGS(*ppte);
+                    uint64 child_old_pa = PTE2PA(*cpte);
+
+                    /* 子进程入口指向父进程的同一物理页 */
+                    *cpte = PA2PTE(parent_pa) | flags;
+
+                    /* 释放 uvmcopy 为子进程创建的私有副本 */
+                    pmem_free_pages((void *)child_old_pa, 1);
+                }
+            }
+            svma = svma->next;
+        }
+    }
+
     pid = np->pid;
     np->state = RUNNABLE;
     np->main_thread->state = t_RUNNABLE; ///< 设置主线程状态为可运行
@@ -817,6 +857,42 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
 
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
+
+    /* 复制父进程的共享内存段信息 */
+    for (i = 0; i < MAX_SHAREMEMORY_REGION_NUM; i++)
+        np->sharememory[i] = p->sharememory[i];
+    np->shm_num = p->shm_num;
+    np->shm_size = p->shm_size;
+
+    /* 修复 SHARE 类型的 VMA 映射：使子进程共享父进程的物理页 */
+    {
+        struct vma *svma = np->vma->next;
+        while (svma != np->vma)
+        {
+            if (svma->type == SHARE && svma->addr != svma->end)
+            {
+                for (uint64 va = svma->addr; va < svma->end; va += PGSIZE)
+                {
+                    pte_t *ppte = walk(p->pagetable, va, 0);
+                    if (ppte == NULL || (*ppte & PTE_V) == 0)
+                        continue;
+
+                    pte_t *cpte = walk(np->pagetable, va, 0);
+                    if (cpte == NULL || (*cpte & PTE_V) == 0)
+                        continue;
+
+                    uint64 parent_pa = PTE2PA(*ppte);
+                    uint64 flags = PTE_FLAGS(*ppte);
+                    uint64 child_old_pa = PTE2PA(*cpte);
+
+                    *cpte = PA2PTE(parent_pa) | flags;
+                    pmem_free_pages((void *)child_old_pa, 1);
+                }
+            }
+            svma = svma->next;
+        }
+    }
+
     args_t tmp;
     if (copyin(p->pagetable, (char *)(&tmp), stack,
                sizeof(args_t)) < 0)

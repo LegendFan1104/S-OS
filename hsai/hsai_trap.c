@@ -715,8 +715,12 @@ void usertrap(void)
             }
         }
         
-        pte_t *pte = walk(p->pagetable, r_csr_badv(), 0);
-        printf("pte=%p (valid=%d, *pte=0x%p)\n", pte, *pte & PTE_V, *pte);
+        uint64 badv = r_csr_badv();
+        pte_t *pte = (badv < MAXVA) ? walk(p->pagetable, badv, 0) : NULL;
+        if (pte)
+            printf("pte=%p (valid=%d, *pte=0x%p)\n", pte, *pte & PTE_V, *pte);
+        else
+            printf("badv=0x%p out of range, cannot walk page table\n", badv);
         printf("p->pid=%d, p->sz=0x%p\n", p->pid, p->sz);
         uint64 estat = r_csr_estat();
         uint64 ecode = (estat & 0x3F0000) >> 16;
