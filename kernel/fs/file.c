@@ -537,14 +537,14 @@ vfs_alloc_file(void)
  * 
  * @param dir 
  */
-void 
-vfs_free_dir(void *dir) 
+void
+vfs_free_dir(void *dir)
 {
     int i;
     acquire(&file_vnode_table.lock);
-    for (i = 0; i < NFILE; i++) 
+    for (i = 0; i < NFILE; i++)
     {
-        if (file_vnode_table.isdir[i] && 
+        if (file_vnode_table.isdir[i] &&
             (dir == file_vnode_table.vnodes[i].data))
         {
             file_vnode_table.valid[i] = 0;
@@ -554,22 +554,23 @@ vfs_free_dir(void *dir)
             return;
         }
     }
+    release(&file_vnode_table.lock);
 }
 
 /**
  * @brief 释放文件结构体
- * 
- * @param file 
+ *
+ * @param file
  */
-void 
-vfs_free_file(void *file) 
+void
+vfs_free_file(void *file)
 {
     int i;
     acquire(&file_vnode_table.lock);
-    for (i = 0; i < NFILE; i++) 
+    for (i = 0; i < NFILE; i++)
     {
-        if ((file_vnode_table.isdir[i]==0) && 
-            (file == file_vnode_table.vnodes[i].data)) 
+        if ((file_vnode_table.isdir[i]==0) &&
+            (file == file_vnode_table.vnodes[i].data))
         {
             file_vnode_table.valid[i] = 0;
             kfree(file_vnode_table.vnodes[i].data);
@@ -578,4 +579,5 @@ vfs_free_file(void *file)
             return;
         }
     }
+    release(&file_vnode_table.lock);
 }
