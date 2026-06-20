@@ -32,11 +32,13 @@ void alloc_aux(uint64 *aux, uint64 atid, uint64 value);
 int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
 void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, uint64 aux[]);
 static uint64 load_interpreter(pgtbl_t pt, struct inode *ip, elf_header_t *interpreter);
+static int has_suffix(const char *path, const char *suffix);
 proc_t p_copy;
-uint64 ustack[NARG];
-uint64 estack[NENV];
+uint64 ustack[NARG + 2];
+uint64 estack[NENV + 2];
 char *modified_argv[MAXARG];
 uint64 aux[MAXARG * 2 + 3] = {0, 0, 0};
+static int exec_trace_once = 0;
 int is_sh_script(char *path);
 int exec(char *path, char **argv, char **env)
 {
@@ -71,10 +73,12 @@ int exec(char *path, char **argv, char **env)
     program_header_t interp; //< 保存interp程序头地址，用来读取所需解释器的name
     int ret;
     int is_dynamic = 0;
+    const char *bad_stage = "unknown";
     /// @todo : 对ip上锁
     /* 读取ELF头部信息并进行验证 */
     if (ip->i_op->read(ip, 0, (uint64)&ehdr, 0, sizeof(ehdr)) != sizeof(ehdr)) ///< 读取Elf头部信息
     {
+        bad_stage = "read-ehdr";
         goto bad;
     }
     if (ehdr.magic != ELF_MAGIC) ///< 判断是否为ELF文件
@@ -93,19 +97,34 @@ int exec(char *path, char **argv, char **env)
     pgtbl_t new_pt = proc_pagetable(p);    ///< 给进程分配新的页表
     uint64 low_vaddr = 0xffffffffffffffff; ///< 记录起始地址
     uint64 sz = 0;
+    uint64 load_bias = 0;
+    uint64 at_phdr = 0;
     int off;
     if (new_pt == NULL)
         panic("alloc new_pt\n");
+    if (ehdr.type == ELF_TYPE_DYN)
+    {
+        // LTP test binaries are PIE. Map them at a low, non-zero base so
+        // the loader sees relocated AT_* values and page zero stays unmapped.
+        load_bias = 0x10000UL;
+    }
     int i;
     /* 加载程序段 （PT_LOAD类型）*/
     for (i = 0, off = ehdr.phoff; i < ehdr.phnum; i++, off += sizeof(ph))
     {
         if (ip->i_op->read(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+        {
+            bad_stage = "read-phdr";
             goto bad;
+        }
         if (ph.type == ELF_PROG_INTERP)
         {
             is_dynamic = 1;
             memmove((void *)&interp, (const void *)&ph, sizeof(ph)); //< 拷贝到interp，不然ph下一轮就被覆写了
+        }
+        if (ph.type == ELF_PROG_PHDR)
+        {
+            at_phdr = load_bias + ph.vaddr;
         }
         // if(ph.type == ELF_PROG_PHDR)
         // {
@@ -113,17 +132,22 @@ int exec(char *path, char **argv, char **env)
         // }
         if (ph.type != ELF_PROG_LOAD) //< DYNAMIC段已经在PT_LOAD被加载了
             continue;
+        uint64 seg_vaddr = load_bias + ph.vaddr;
         if (ph.memsz < ph.filesz)
-            goto bad;
-        if (ph.vaddr + ph.memsz < ph.vaddr)
         {
+            bad_stage = "ph-memsz-filesz";
             goto bad;
         }
-        if (ph.vaddr < low_vaddr) ///< 更新最低虚拟地址并扩展虚拟内存
+        if (seg_vaddr + ph.memsz < seg_vaddr)
         {
-            if (ph.vaddr != 0)
+            bad_stage = "ph-wrap";
+            goto bad;
+        }
+        if (seg_vaddr < low_vaddr) ///< 更新最低虚拟地址并扩展虚拟内存
+        {
+            if (seg_vaddr != 0)
                 uvm_grow(new_pt, sz, 0x100UL, flags_to_perm(ph.flags));
-            low_vaddr = ph.vaddr;
+            low_vaddr = seg_vaddr;
         }
 
 #if DEBUG
@@ -138,23 +162,28 @@ int exec(char *path, char **argv, char **env)
         uint64 sz1;
         /* 扩展用户虚拟空间 */
 #if defined RISCV
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(ph.vaddr), ph.vaddr + ph.memsz, flags_to_perm(ph.flags));
+        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
 #else
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(ph.vaddr), ph.vaddr + ph.memsz, flags_to_perm(ph.flags));
+        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
 #endif
         // if (uret != PGROUNDUP(ph.vaddr + ph.memsz))
         //     goto bad;
         sz = sz1;
         uint margin_size = 0;
-        if ((ph.vaddr % PGSIZE) != 0) ///< 处理未对齐的段
+        if ((seg_vaddr % PGSIZE) != 0) ///< 处理未对齐的段
         {
-            margin_size = ph.vaddr % PGSIZE;
+            margin_size = seg_vaddr % PGSIZE;
         }
         /* 加载段内容到内存中 */
-        if (loadseg(new_pt, PGROUNDDOWN(ph.vaddr), ip, PGROUNDDOWN(ph.off), ph.filesz + margin_size) < 0)
+        if (loadseg(new_pt, PGROUNDDOWN(seg_vaddr), ip, PGROUNDDOWN(ph.off), ph.filesz + margin_size) < 0)
+        {
+            bad_stage = "loadseg";
             goto bad;
+        }
         sz = PGROUNDUP(sz1);
     }
+    if (at_phdr == 0)
+        at_phdr = load_bias + ehdr.phoff;
     /* 设置进程内存，页表，虚拟地址，为动态映射mmap做准备 */
     p->virt_addr = low_vaddr;
     p->sz = sz;
@@ -184,7 +213,8 @@ int exec(char *path, char **argv, char **env)
                 return -1;
             }
         }
-        else if (!strcmp((const char *)interp_name, "/lib/ld-musl-riscv64-sf.so.1")) //< rv musl dynamic
+        else if (!strcmp((const char *)interp_name, "/lib/ld-musl-riscv64-sf.so.1") ||
+                 !strcmp((const char *)interp_name, "/lib/ld-musl-riscv64.so.1")) //< rv musl dynamic
         {
             if ((ip = namei("lib/libc.so")) == NULL) ///< musl加载libc.so就行了
             {
@@ -217,6 +247,7 @@ int exec(char *path, char **argv, char **env)
 
         if (ip->i_op->read(ip, 0, (uint64)&interpreter, 0, sizeof(interpreter)) != sizeof(interpreter)) ///< 读取Elf头部信息
         {
+            bad_stage = "read-interpreter-ehdr";
             goto bad;
         }
         if (interpreter.magic != ELF_MAGIC) ///< 判断是否为ELF文件
@@ -238,7 +269,7 @@ int exec(char *path, char **argv, char **env)
     if (interp_start_addr)
         program_entry = interp_start_addr + interpreter.entry; ///< 动态链接地址
     else
-        program_entry = ehdr.entry; ///< 设置程序的entry地址
+        program_entry = load_bias + ehdr.entry; ///< 设置程序的entry地址
     alloc_vma_stack(p);             ///< 给进程分配栈空间
     uint64 sp = get_proc_sp(p);     ///< 获取栈指针
     uint64 stackbase = sp - USER_STACK_SIZE;
@@ -273,7 +304,8 @@ int exec(char *path, char **argv, char **env)
     }
 
     /// 遍历环境变量数组 env，将每个环境变量字符串复制到用户栈 environment ASCIIZ str
-    int envc;
+    int envc = 0;
+    int startup_aux_words = 0;
     estack[0] = 0;
     sp -= sp % 16;
     if (env)
@@ -287,7 +319,10 @@ int exec(char *path, char **argv, char **env)
             assert(sp > stackbase, "sp out of range!");
             ret = copyout(new_pt, sp, (char *)env[envc], strlen(env[envc]) + 1);
             if (ret < 0)
+            {
+                bad_stage = "copy-env-str";
                 goto bad;
+            }
             estack[index] = sp;
             estack[index + 1] = 0;
         }
@@ -307,7 +342,10 @@ int exec(char *path, char **argv, char **env)
             assert(sp > stackbase, "sp out of range!");
             ret = copyout(new_pt, sp, (char *)argv[argc], strlen(argv[argc]) + 1);
             if (ret < 0)
+            {
+                bad_stage = "copy-argv-str";
                 goto bad;
+            }
             ustack[index] = sp;
             ustack[index + 1] = 0;
         }
@@ -317,17 +355,20 @@ int exec(char *path, char **argv, char **env)
     sp -= 16;
     uint64 random[2] = {0x7be6f23c6eb43a7e, 0xb78b3ea1f7c8db96}; /// AT_RANDOM值
     if (sp < stackbase || copyout(new_pt, sp, (char *)random, 16) < 0)
+    {
+        bad_stage = "copy-random";
         goto bad;
+    }
     /// auxv 填充辅助变量
 
     alloc_aux(aux, AT_HWCAP, 0);
     alloc_aux(aux, AT_PAGESZ, PGSIZE);
-    alloc_aux(aux, AT_PHDR, ehdr.phoff + p->virt_addr); // 程序头表地址
+    alloc_aux(aux, AT_PHDR, at_phdr);                   // 程序头表地址
     // LOG_LEVEL(LOG_ERROR,"ehdr.phoff + p->virt_addr: %x\n",ehdr.phoff + p->virt_addr); //< 红字显示信息，更醒目 :) .本来是想看ehdr头的地址，但是好像没有影响
     alloc_aux(aux, AT_PHENT, ehdr.phentsize); // 程序头大小
     alloc_aux(aux, AT_PHNUM, ehdr.phnum);
     alloc_aux(aux, AT_BASE, interp_start_addr); // 解释器基址
-    alloc_aux(aux, AT_ENTRY, ehdr.entry);       // 程序入口
+    alloc_aux(aux, AT_ENTRY, load_bias + ehdr.entry);  // 程序入口
     alloc_aux(aux, AT_UID, 0);                  // 用户ID
     alloc_aux(aux, AT_EUID, 0);                 // 有效用户ID
     alloc_aux(aux, AT_GID, 0);                  // 组ID
@@ -337,10 +378,13 @@ int exec(char *path, char **argv, char **env)
     alloc_aux(aux, AT_FLAGS, 0);                // 标志位
     alloc_aux(aux, AT_NULL, 0);                 // 结束标志
 
+    startup_aux_words = 2 * aux[0] + 2;
+
     /* Load Aux */
     if ((sp = loadaux(new_pt, sp, stackbase, aux)) == -1)
     {
         printf("loadaux failed\n");
+        bad_stage = "loadaux";
         goto bad;
     }
 
@@ -354,6 +398,7 @@ int exec(char *path, char **argv, char **env)
         if (copyout(new_pt, sp, (char *)(estack + 1),
                     (argc + 1) * sizeof(uint64)) < 0)
         {
+            bad_stage = "copy-envp";
             goto bad;
         }
     }
@@ -362,10 +407,48 @@ int exec(char *path, char **argv, char **env)
     sp -= (argc + 2) * sizeof(uint64);
     sp -= sp % 16;
     if (sp < stackbase)
+    {
+        bad_stage = "argv-stack-range";
         goto bad;
+    }
     if (copyout(new_pt, sp, (char *)ustack, (argc + 2) * sizeof(uint64)) < 0)
+    {
+        bad_stage = "copy-argvp";
         goto bad;
+    }
 
+    {
+        int env_words = estack[0];
+        int arg_words = ustack[0];
+        int startup_words = 0;
+        uint64 startup[1 + (NARG + 1) + (NENV + 1) + (MAXARG * 2 + 2)];
+
+        startup[startup_words++] = arg_words;
+        for (i = 1; i <= arg_words; i++)
+            startup[startup_words++] = ustack[i];
+        startup[startup_words++] = 0;
+        for (i = 1; i <= env_words; i++)
+            startup[startup_words++] = estack[i];
+        startup[startup_words++] = 0;
+        for (i = 1; i <= startup_aux_words; i++)
+            startup[startup_words++] = aux[i];
+
+        sp -= startup_words * sizeof(uint64);
+        sp -= sp % 16;
+        if (sp < stackbase)
+        {
+            bad_stage = "startup-stack-range";
+            goto bad;
+        }
+        if (copyout(new_pt, sp, (char *)startup,
+                    startup_words * sizeof(uint64)) < 0)
+        {
+            bad_stage = "copy-startup";
+            goto bad;
+        }
+    }
+
+    p->trapframe->a0 = sp;
     p->trapframe->a1 = sp + 8;
 #if defined RISCV
     p->trapframe->epc = program_entry;
@@ -373,6 +456,11 @@ int exec(char *path, char **argv, char **env)
     p->trapframe->era = program_entry;
 #endif
     p->trapframe->sp = sp;
+    if (!exec_trace_once && has_suffix(path, "abort01"))
+    {
+        exec_trace_once = 1;
+        debug_print_stack(new_pt, sp, ustack[0], estack[0], aux);
+    }
 #if DEBUG
     printf("Jump to entry: 0x%lx (interp base: 0x%lx)\n",
            program_entry, interp_start_addr);
@@ -400,8 +488,20 @@ int exec(char *path, char **argv, char **env)
     //< FUCK GLIBC!!!
 
 bad:
+    printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
+           bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
     panic("exec error!\n");
     return -1;
+}
+
+static int has_suffix(const char *path, const char *suffix)
+{
+    int path_len = strlen(path);
+    int suffix_len = strlen(suffix);
+
+    if (path_len < suffix_len)
+        return 0;
+    return strcmp(path + path_len - suffix_len, suffix) == 0;
 }
 
 int is_sh_script(char *path)

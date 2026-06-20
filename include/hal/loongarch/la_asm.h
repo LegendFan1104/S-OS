@@ -1,3 +1,11 @@
+//
+// Created by Li shuang ( pseudonym ) on 2024-03-26 
+// --------------------------------------------------------------
+// | Note: This code file just for study, not for commercial use 
+// | Contact Author: lishuang.mk@whu.edu.cn 
+// --------------------------------------------------------------
+//
+
 /*loongarch hal使用*/
 
 #pragma once

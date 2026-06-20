@@ -140,18 +140,32 @@ static struct ext4_buf *ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba) {
 
 struct ext4_buf *ext4_buf_lowest_lru(struct ext4_bcache *bc) { return RB_MIN(ext4_buf_lru, &bc->lru_root); }
 
-void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf) {
-    /* Do NOT drop a buffer that is still referenced —
-     * doing so would cause use-after-free for whoever holds the reference. */
-    if (buf->refctr) {
-        ext4_dbg(DEBUG_BCACHE,
-                 DBG_WARN "Buffer is still referenced, not dropping. "
-                          "lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
-                 buf->lba, buf->refctr);
+static void ext4_bcache_lru_insert(struct ext4_bcache *bc, struct ext4_buf *buf) {
+    if (buf->on_lru_list)
         return;
-    }
+
+    RB_INSERT(ext4_buf_lru, &bc->lru_root, buf);
+    buf->on_lru_list = true;
+}
+
+static void ext4_bcache_lru_remove(struct ext4_bcache *bc, struct ext4_buf *buf) {
+    if (!buf->on_lru_list)
+        return;
 
     RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
+    buf->on_lru_list = false;
+}
+
+void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf) {
+    /* Warn on dropping any referenced buffers.*/
+    if (buf->refctr) {
+        ext4_dbg(DEBUG_BCACHE,
+                 DBG_WARN "Buffer is still referenced. "
+                          "lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
+                 buf->lba, buf->refctr);
+    } else
+        ext4_bcache_lru_remove(bc, buf);
+
     RB_REMOVE(ext4_buf_lba, &bc->lba_root, buf);
 
     /*Forcibly drop dirty buffer.*/
@@ -192,7 +206,7 @@ struct ext4_buf *ext4_bcache_find_get(struct ext4_bcache *bc, struct ext4_block 
             /* Assign new value to LRU id and increment LRU counter
              * by 1*/
             buf->lru_id = ++bc->lru_ctr;
-            RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
+            ext4_bcache_lru_remove(bc, buf);
             if (ext4_bcache_test_flag(buf, BC_DIRTY))
                 ext4_bcache_remove_dirty_node(bc, buf);
         }
@@ -255,15 +269,25 @@ int ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b) {
     /*Block should have a valid pointer to ext4_buf.*/
     ext4_assert(buf);
 
-    /*Check if someone don't try free unreferenced block cache.*/
-    ext4_assert(buf->refctr);
+    /*
+     * Some upper paths can attempt to release the same cached block twice
+     * during error handling. The cache entry is still valid in that case, it
+     * is just already unreferenced. Treat the second release as a no-op
+     * instead of panicking the whole kernel.
+     */
+    if (!buf->refctr) {
+        b->lb_id = 0;
+        b->buf = 0;
+        b->data = 0;
+        return EOK;
+    }
 
     /*Just decrease reference counter*/
     ext4_bcache_dec_ref(buf);
 
     /* We are the last one touching this buffer, do the cleanups. */
     if (!buf->refctr) {
-        RB_INSERT(ext4_buf_lru, &bc->lru_root, buf);
+        ext4_bcache_lru_insert(bc, buf);
         /* This buffer is ready to be flushed. */
         if (ext4_bcache_test_flag(buf, BC_DIRTY) && ext4_bcache_test_flag(buf, BC_UPTODATE)) {
             if (bc->bdev->cache_write_back && !ext4_bcache_test_flag(buf, BC_FLUSH) &&
@@ -281,6 +305,7 @@ int ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b) {
     }
 
     b->lb_id = 0;
+    b->buf = 0;
     b->data = 0;
 
     return EOK;

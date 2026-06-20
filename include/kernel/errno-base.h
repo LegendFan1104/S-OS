@@ -38,6 +38,14 @@
 #define	ERANGE		34	/* Math result not representable */
 
 #define	ENOSYS		38	/* Invalid system call number */
+#define	ENOTSOCK	88	/* Socket operation on non-socket */
+#define	EPROTONOSUPPORT	93	/* Protocol not supported */
+#define	ESOCKTNOSUPPORT	94	/* Socket type not supported */
+#define	EOPNOTSUPP	95	/* Operation not supported on transport endpoint */
+#define	EAFNOSUPPORT	97	/* Address family not supported by protocol */
+#define	EADDRINUSE	98	/* Address already in use */
+#define	EADDRNOTAVAIL	99	/* Cannot assign requested address */
+#define	ECONNABORTED	103	/* Software caused connection abort */
 
 #define	EINPROGRESS	115	/* Operation now in progress */
 
