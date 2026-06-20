@@ -75,6 +75,8 @@ void machine_trap(void)
 int pagefault_handler(uint64 addr)
 {
     proc_t *p = myproc();
+    if (p == NULL || addr >= MAXVA)
+        return -1;
     struct vma *find_vma = find_mmap_vma(p->vma);
     int flag = 0;
     int perm = 0;
@@ -104,13 +106,13 @@ int pagefault_handler(uint64 addr)
             }
             else
             {
-                panic("don't find addr:%p in vma\n", addr);
                 return -1;
             }
         }
     }
     // 找到缺页对应的vma
-    assert(flag, "don't find addr:%p in vma\n", addr);
+    if (!flag)
+        return -1;
     // DEBUG_LOG_LEVEL(DEBUG, "pagefault addr:%p,p->sz:%p,alloc page num:%d\n", addr, p->sz, npages);
 
     char *pa;
@@ -505,6 +507,7 @@ void usertrap(void)
         {
             if (p->killed)
             {
+                p->term_signal = p->killed;
                 exit(0);
             }
             // printf(BLUE_COLOR_PRINT"epc: %x",trapframe->epc);
@@ -564,11 +567,14 @@ void usertrap(void)
                     printf("STVAL PTE for addr 0x%p: not found or invalid (pte=%p)\n", r_stval(), stval_pte);
                 }
             }
-            break;
+            p->term_signal = (cause == InstructionPageFault) ? SIGSEGV :
+                             (cause == InstructionMisaligned) ? SIGILL : SIGBUS;
+            exit(0);
         case IllegalInstruction:
             printf("IllegalInstruction in application, epc = %p, core dumped.",
                    trapframe->epc);
-            break;
+            p->term_signal = SIGILL;
+            exit(0);
         case LoadPageFault:
         case StorePageFault:
             pagefault_handler(r_stval());
@@ -577,7 +583,8 @@ void usertrap(void)
         default:
             printf("unknown trap: %p, stval = %p sepc = %p\n", r_scause(),
                    r_stval(), r_sepc());
-            break;
+            p->term_signal = SIGSEGV;
+            exit(0);
         }
     }
 #else
@@ -624,6 +631,7 @@ void usertrap(void)
     {
         if (p->killed)
         {
+            p->term_signal = p->killed;
             exit(0);
         }
         /* 系统调用 */
@@ -638,7 +646,12 @@ void usertrap(void)
          * load page fault or store page fault
          * check if the page fault is caused by stack growth
          */
-        pagefault_handler(r_csr_badv());
+        if (pagefault_handler(r_csr_badv()) < 0)
+        {
+            p->term_signal = SIGSEGV;
+            p->killed = SIGSEGV;
+            exit(SIGSEGV);
+        }
         // printf("usertrap():handling exception\n");
         // uint64 info = r_csr_crmd();
         // printf("usertrap(): crmd=0x%p\n", info);
@@ -716,18 +729,27 @@ void usertrap(void)
         }
         
         uint64 badv = r_csr_badv();
-        pte_t *pte = (badv < MAXVA) ? walk(p->pagetable, badv, 0) : NULL;
-        if (pte)
-            printf("pte=%p (valid=%d, *pte=0x%p)\n", pte, *pte & PTE_V, *pte);
+        if (badv < MAXVA)
+        {
+            pte_t *pte = walk(p->pagetable, badv, 0);
+            if (pte)
+                printf("pte=%p (valid=%d, *pte=0x%p)\n", pte, *pte & PTE_V, *pte);
+            else
+                printf("pte=(nil)\n");
+        }
         else
-            printf("badv=0x%p out of range, cannot walk page table\n", badv);
+        {
+            printf("badv %p exceeds MAXVA %p\n", badv, MAXVA);
+        }
         printf("p->pid=%d, p->sz=0x%p\n", p->pid, p->sz);
         uint64 estat = r_csr_estat();
         uint64 ecode = (estat & 0x3F0000) >> 16;
         uint64 esubcode = (estat & 0x7FC00000) >> 22;
         handle_exception(ecode, esubcode);
         LOG_LEVEL(3, "\n       era=%p\n       badi=%p\n       badv=%p\n       crmd=%x\n", r_csr_era(), r_csr_badi(), r_csr_badv(), r_csr_crmd());
-        panic("usertrap\n");
+        p->term_signal = SIGSEGV;
+        p->killed = SIGSEGV;
+        exit(SIGSEGV);
     }
     if (which_dev == 2)
     {
@@ -840,16 +862,54 @@ void kerneltrap(void)
 
     if ((which_dev = devintr()) == 0)
     {
+        struct proc *p = myproc();
+        struct trapframe *trapframe = p ? p->trapframe : 0;
+
+        if (p && scause == InstructionPageFault && sepc < MAXVA)
+        {
+            printf("kerneltrap: user-range instruction fault, convert to SIGSEGV\n");
+            printf("scause %p\n", scause);
+            printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+            printf("satp=%p expected_user_satp=%p kernel_satp_saved=%p stvec=%p sstatus=%p\n",
+                   r_satp(), MAKE_SATP(p->pagetable), p->trapframe->kernel_satp, r_stvec(), r_sstatus());
+            printf("context ra=%p sp=%p\n", p->context.ra, p->context.sp);
+            printf("thread context ra=%p sp=%p\n", p->main_thread->context.ra, p->main_thread->context.sp);
+            printf("trapframe epc=%p sp=%p kernel_sp=%p a7=%p\n",
+                   p->trapframe->epc, p->trapframe->sp, p->trapframe->kernel_sp, p->trapframe->a7);
+            pte_t *fault_pte = walk(p->pagetable, r_sepc(), 0);
+            if (fault_pte && (*fault_pte & PTE_V))
+            {
+                printf("fault-pte=%p V=%d R=%d W=%d X=%d U=%d raw=%p\n",
+                       fault_pte,
+                       !!(*fault_pte & PTE_V),
+                       !!(*fault_pte & PTE_R),
+                       !!(*fault_pte & PTE_W),
+                       !!(*fault_pte & PTE_X),
+                       !!(*fault_pte & PTE_U),
+                       *fault_pte);
+            }
+            else
+            {
+                printf("fault-pte: unmapped for sepc=%p\n", r_sepc());
+            }
+            p->term_signal = SIGSEGV;
+            p->killed = SIGSEGV;
+            exit(SIGSEGV);
+            panic("kerneltrap exit return");
+        }
 
         printf("scause %p\n", scause);
         printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
-        struct proc *p = myproc();
-        struct trapframe *trapframe = p->trapframe;
         printf("trapframe a0=%p\na1=%p\na2=%p\na3=%p\na4=%p\na5=%p\na6=%p\na7=%p\nsp=%p\nepc=%p\n",
                trapframe->a0, trapframe->a1, trapframe->a2, trapframe->a3, trapframe->a4,
                trapframe->a5, trapframe->a6, trapframe->a7, trapframe->sp, trapframe->epc);
         printf("thread tid=%d pid=%d, p->sz=0x%p\n", p->main_thread->tid, p->pid, p->sz);
         printf("context ra=%p sp=%p\n", p->context.ra, p->context.sp);
+        printf("thread context ra=%p sp=%p\n", p->main_thread->context.ra, p->main_thread->context.sp);
+        printf("thread trapframe epc=%p sp=%p kernel_sp=%p\n",
+               p->main_thread->trapframe->epc,
+               p->main_thread->trapframe->sp,
+               p->main_thread->trapframe->kernel_sp);
         panic("kerneltrap");
     }
     // 这里删去了时钟中断的代码，时钟中断使用yield

@@ -28,6 +28,39 @@ export CFLAGS += -DDEBUG=0
 export LDFLAGS = -z max-page-size=4096
 export WORKPATH = $(shell pwd)
 export BUILDPATH = $(WORKPATH)/build/loongarch#build/loongarch
+export LOONGARCH_TEST_PROFILE ?= smoke
+export RISCV_TEST_PROFILE ?= smoke
+TEST_PROFILE ?= submit-rv
+
+ifeq ($(TEST_PROFILE),submit-rv)
+RISCV_TEST_PROFILE := submit
+LOONGARCH_TEST_PROFILE := submit
+endif
+
+ifeq ($(TEST_PROFILE),probe-rv)
+RISCV_TEST_PROFILE := probe
+LOONGARCH_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),ltp-musl-la)
+LOONGARCH_TEST_PROFILE := ltp-musl
+RISCV_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),ltp-glibc-la)
+LOONGARCH_TEST_PROFILE := ltp-glibc
+RISCV_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),ltp-musl-rv)
+RISCV_TEST_PROFILE := ltp-musl
+LOONGARCH_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),ltp-glibc-rv)
+RISCV_TEST_PROFILE := ltp-glibc
+LOONGARCH_TEST_PROFILE := smoke
+endif
 
 LD_SCRIPT = hal/loongarch/ld.script
 
@@ -66,9 +99,12 @@ DISK_LA_IMG = disk-la.img
 FS_SIZE_MB = 512
 
 # .PHONY 是一个伪规则，其后面依赖的规则目标会成为一个伪目标，使得规则执行时不会实际生成这个目标文件
-.PHONY: la init_la_dir compile_all load_kernel clean la_qemu
+.PHONY: all build-all-kernels la init_la_dir compile_all load_kernel clean la_qemu
+.PHONY: ltp-musl-la ltp-glibc-la ltp-musl-rv ltp-glibc-rv probe-rv
 
-all: init_la_dir init_rv_dir $(DISK_IMG) $(DISK_LA_IMG)
+all: clean build-all-kernels
+
+build-all-kernels: init_la_dir init_rv_dir
 	#user
 	$(MAKE) la -C user/loongarch
 	$(MAKE) riscv -C user/riscv
@@ -118,7 +154,7 @@ la_qemu:
 	./run.sh
 
 docker_la: #多线程加快速度
-	make __docker_la -j
+	$(MAKE) __docker_la
 
 __docker_la: init_la_dir docker_compile_all  #docker_compile_all会先删除build/loongarch再重新编译
 	$(LD) $(LDFLAGS) -T $(LD_SCRIPT) -o $(la_kernel) $(la_objs) 
@@ -224,7 +260,7 @@ rv_qemu: #评测docker运行riscv qemu,本机也可以 调试后缀 ：-gdb tcp:
 	qemu-system-riscv64 $(QEMUOPTS)
 
 sbi: #多线程加快速度
-	make __sbi -j
+	$(MAKE) __sbi
 
 #编译使用open-sbi的riscv内核。区别是内核起始段变为0x80200000和不调用start函数。为了兼容，编译时宏跳过start函数体的内容
 __sbi: clean_rv init_rv_dir sbi_compile_riscv 
@@ -256,6 +292,24 @@ sbi_qemu: #初赛，使用opensbi
 	@echo "rv_disk_file = $(rv_disk_file)"
 	@echo "__________________________"
 	qemu-system-riscv64 $(sbi_QEMUOPTS)
+
+ltp-musl-la: clean
+	$(MAKE) la TEST_PROFILE=ltp-musl-la
+
+ltp-glibc-la: clean
+	$(MAKE) la TEST_PROFILE=ltp-glibc-la
+
+ltp-musl-rv: clean
+	$(MAKE) sbi TEST_PROFILE=ltp-musl-rv
+
+ltp-glibc-rv: clean
+	$(MAKE) sbi TEST_PROFILE=ltp-glibc-rv
+
+submit-rv: clean
+	$(MAKE) __sbi TEST_PROFILE=submit-rv
+
+probe-rv: clean
+	$(MAKE) __sbi TEST_PROFILE=probe-rv
 
 	
 #不调试，直接运行

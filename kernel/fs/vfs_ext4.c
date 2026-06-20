@@ -31,6 +31,24 @@
 #include "vmem.h"
 #include "cpu.h"
 
+static void vfs_ext4_mp_lock(struct ext4_mountpoint *mp)
+{
+    if (mp && mp->os_locks && mp->os_locks->lock)
+        mp->os_locks->lock();
+}
+
+static void vfs_ext4_mp_unlock(struct ext4_mountpoint *mp)
+{
+    if (mp && mp->os_locks && mp->os_locks->unlock)
+        mp->os_locks->unlock();
+}
+
+static uint64
+vfs_ext4_now_sec(void)
+{
+    return timer_get_ntime().tv_sec;
+}
+
 /**
  * @brief 初始化ext4文件系统，主要是清空块设备和挂载点
  * 
@@ -382,6 +400,16 @@ vfs_ext4_write(struct file *f, int user_addr, const uint64 addr, int n)
             return 0;   
     }
     f -> f_pos = ext4_f->fpos;
+    if (bytewrite > 0)
+    {
+        uint64 now = vfs_ext4_now_sec();
+        if (f->f_time_update_sec != now)
+        {
+            ext4_mtime_set(f->f_path, now);
+            ext4_ctime_set(f->f_path, now);
+            f->f_time_update_sec = now;
+        }
+    }
     return bytewrite;
 }
 
@@ -518,7 +546,7 @@ vfs_ext4_openat(struct file *f)
         if (status != EOK) 
         {
             vfs_free_dir(vnode->data);
-            return -ENOMEM;
+            return -status;
         }
         f->f_data.f_vnode = *vnode;
     } 
@@ -532,7 +560,7 @@ vfs_ext4_openat(struct file *f)
         if (status != EOK) 
         {
             vfs_free_file(vnode->data);
-            return -ENOMEM;
+            return -status;
         }
         f->f_data.f_vnode = *vnode;
         f->f_pos = ((ext4_file*) vnode->data)->fpos;
@@ -573,22 +601,55 @@ vfs_ext4_link(const char *oldpath, const char *newpath)
     return EOK;
 }
 
-int vfs_ext_readlink(const char *path, uint64 ubuf, size_t bufsize) {
-    uint64 readbytes = 15;
-    //char linkpath[MAXPATH];
-    char * str="/glibc/busybox";
-    // int r = ext4_readlink(path, linkpath, bufsize, &readbytes);
-    // if (r != EOK) {
-    //     return -r;
-    // }
-    //< 既然读不出来，就写回/glibc/busybox吧
-    #if DEBUG
-        LOG_LEVEL(LOG_DEBUG, "[vfs_ext_readlink] linkpath: %s\n",str);
-    #endif
-    if (copyout(myproc()->pagetable, ubuf, str, readbytes) != 0) {
-        return -1;
-    }
+int
+vfs_ext4_symlink(const char *target, const char *path)
+{
+    int r = ext4_fsymlink(target, path);
+
+    if (r != EOK)
+        return -r;
     return EOK;
+}
+
+int
+vfs_ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *readbytes)
+{
+    const char *virtual_target = "/glibc/busybox";
+
+    if (buf == NULL || bufsize == 0)
+        return -EINVAL;
+
+    if (!strcmp(path, "/proc/self/exe"))
+    {
+        size_t len = strlen(virtual_target);
+        if (len > bufsize)
+            len = bufsize;
+        memmove(buf, virtual_target, len);
+        if (readbytes)
+            *readbytes = len;
+        return EOK;
+    }
+
+    return ext4_readlink(path, buf, bufsize, readbytes);
+}
+
+int
+vfs_ext_readlink(const char *path, uint64 ubuf, size_t bufsize)
+{
+    char linkpath[MAXPATH];
+    size_t readbytes = 0;
+    int r;
+
+    memset(linkpath, 0, sizeof(linkpath));
+    r = vfs_ext4_readlink(path, linkpath, min(bufsize, (size_t)(MAXPATH - 1)), &readbytes);
+    if (r != EOK)
+        return -r;
+#if DEBUG
+    LOG_LEVEL(LOG_DEBUG, "[vfs_ext_readlink] linkpath: %s\n", linkpath);
+#endif
+    if (copyout(myproc()->pagetable, ubuf, linkpath, readbytes) != 0)
+        return -EFAULT;
+    return (int)readbytes;
 }
 
 /**
@@ -600,16 +661,13 @@ int vfs_ext_readlink(const char *path, uint64 ubuf, size_t bufsize) {
 int 
 vfs_ext4_rm(const char *path) 
 {
-    int status = 0;
-    ext4_dir ext4_d;
-    status = ext4_dir_open(&ext4_d, path);
-    if (status == EOK) 
-    {
-        (void) ext4_dir_close(&ext4_d);
-        ext4_dir_rm(path);
-    } 
-    else
+    int status = vfs_ext4_is_dir(path);
+    if (status == EOK)
+        status = ext4_dir_rm(path);
+    else if (status == -ENOTDIR)
         status = ext4_fremove(path);
+    else
+        return status;
     return -status;
 }
 
@@ -775,19 +833,26 @@ vfs_ext4_getdents(struct file *f, struct linux_dirent64 *dirp, int count)
     const ext4_direntry *rentry;
     int totlen = 0;
     uint64 current_offset=0;
+    ext4_dir *dir;
 
     /* make integer count */
     if (count == 0) {
         return -EINVAL;
     }
-    ext4_dir_entry_next(f->f_data.f_vnode.data);ext4_dir_entry_next(f->f_data.f_vnode.data); //< 跳过/.和/..
+    dir = (ext4_dir *)f->f_data.f_vnode.data;
+    if (dir == NULL)
+        return -ENOENT;
+
     d = dirp;
     while (1) {
-        rentry = ext4_dir_entry_next(f->f_data.f_vnode.data);
+        rentry = ext4_dir_entry_next(dir);
         if (rentry == NULL)
             break;
 
-        int namelen = strlen((const char*)rentry->name);
+        int namelen = rentry->name_length;
+        if ((namelen == 1 && rentry->name[0] == '.') ||
+            (namelen == 2 && rentry->name[0] == '.' && rentry->name[1] == '.'))
+            continue;
         /* 
          * 长度是前四项的19加上namelen(字符串长度包括结尾的\0)
          * reclen是namelen+2,如果是+1会错误。原因是没考虑name[]开头的'\' 
@@ -798,13 +863,12 @@ vfs_ext4_getdents(struct file *f, struct linux_dirent64 *dirp, int count)
         if (reclen < sizeof(struct linux_dirent64))
             reclen = sizeof(struct linux_dirent64);
         
-        if (totlen + reclen >= count) 
+        if (totlen + reclen > count) 
             break;
         
         char name[MAXPATH] = {0};
-        //name[0] = '/';
-        strcat(name, (const char*)rentry->name); //< 追加，二者应该都以'/'开头
-        strncpy(d->d_name, name, MAXPATH);
+        memcpy(name, rentry->name, namelen);
+        memcpy(d->d_name, name, namelen + 1);
         
         if (rentry->inode_type == EXT4_DE_DIR) {
             d->d_type = T_DIR;
@@ -871,19 +935,21 @@ vfs_ext4_mkdir(const char *path, uint64_t mode)
 int 
 vfs_ext4_is_dir(const char *path) 
 {
-    struct ext4_dir *dir = vfs_alloc_dir()->data;
-    int status = ext4_dir_open(dir, path);
-    if (status != EOK) 
-    {
-        vfs_free_dir(dir);
+    struct ext4_inode inode;
+    struct ext4_sblock *sb = NULL;
+    uint32 ino = 0;
+    int status = ext4_raw_inode_fill(path, &ino, &inode);
+    if (status != EOK)
         return -status;
-    }
-    status = ext4_dir_close(dir);
-    vfs_free_dir(dir);
-    if (status != EOK) 
+
+    status = ext4_get_sblock(path, &sb);
+    if (status != EOK)
         return -status;
-    
-    return EOK;
+
+    if (ext4_inode_is_type(sb, &inode, EXT4_INODE_MODE_DIRECTORY))
+        return EOK;
+
+    return -ENOTDIR;
 }
 
 /**
@@ -968,19 +1034,21 @@ int
 vfs_ext4_utimens(const char *path, const struct timespec *ts) 
 {
     int status = EOK;
+    uint64 now = vfs_ext4_now_sec();
     if (!ts) 
     {
-        status = ext4_atime_set(path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_atime_set(path, now);
         if (status != EOK)
             return -status;
-        status = ext4_mtime_set(path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_mtime_set(path, now);
         if (status != EOK)
             return -status;
+        ext4_ctime_set(path, now);
         return EOK;
     }
 
     if (ts[0].tv_nsec == UTIME_NOW)
-        status = ext4_atime_set(path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_atime_set(path, now);
     else if (ts[0].tv_nsec != UTIME_OMIT)
         status = ext4_atime_set(path, NS_to_S(TIMESEPC2NS(ts[0])));
     
@@ -988,12 +1056,13 @@ vfs_ext4_utimens(const char *path, const struct timespec *ts)
         return -status;
 
     if (ts[1].tv_nsec == UTIME_NOW)
-        status = ext4_mtime_set(path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_mtime_set(path, now);
     else if (ts[1].tv_nsec != UTIME_OMIT)
         status = ext4_mtime_set(path, NS_to_S(TIMESEPC2NS(ts[1])));
     
     if (status != EOK)
         return -status;
+    ext4_ctime_set(path, now);
     return EOK;
 }
 
@@ -1016,23 +1085,25 @@ vfs_ext4_futimens(struct file *f, const struct timespec *ts)
 {
     int status = EOK;
     struct ext4_file *file = (struct ext4_file *) f->f_data.f_vnode.data;
+    uint64 now = vfs_ext4_now_sec();
 
     if (file == NULL)
         panic("Getting file's ext file failed\n");
     
     if (!ts) 
     {
-        status = ext4_atime_set(f->f_path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_atime_set(f->f_path, now);
         if (status != EOK)
             return -status;
-        status = ext4_mtime_set(f->f_path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_mtime_set(f->f_path, now);
         if (status != EOK)
             return -status;
+        ext4_ctime_set(f->f_path, now);
         return EOK;
     }
 
     if (ts[0].tv_nsec == UTIME_NOW)
-        status = ext4_atime_set(f->f_path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_atime_set(f->f_path, now);
     else if (ts[0].tv_nsec != UTIME_OMIT)
         status = ext4_atime_set(f->f_path, NS_to_S(TIMESEPC2NS(ts[0])));
     
@@ -1040,12 +1111,13 @@ vfs_ext4_futimens(struct file *f, const struct timespec *ts)
         return -status;
 
     if (ts[1].tv_nsec == UTIME_NOW)
-        status = ext4_mtime_set(f->f_path, NS_to_S(TIME2NS(r_time())));
+        status = ext4_mtime_set(f->f_path, now);
     else if (ts[1].tv_nsec != UTIME_OMIT)
         status = ext4_mtime_set(f->f_path, NS_to_S(TIMESEPC2NS(ts[1])));
     
     if (status != EOK)
         return -status;
+    ext4_ctime_set(f->f_path, now);
     return EOK;
 }
 
@@ -1072,24 +1144,24 @@ vfs_ext4_unlinkat(const char* pdir, const char* cdir)
     uint32_t pino, cino;
     struct ext4_inode_ref parent_ref, child_ref;
     int rc;
+    int parent_loaded = 0;
+    int child_loaded = 0;
+
+    vfs_ext4_mp_lock(mp);
 
     /* 1. 查找父目录 inode_ref */
     rc = ext4_raw_inode_fill(pdir, &pino, &parent);
-    if (rc != EOK) return -rc;
+    if (rc != EOK) goto out;
     rc = ext4_fs_get_inode_ref(fs, pino, &parent_ref);
-    if (rc != EOK) return -rc;
+    if (rc != EOK) goto out;
+    parent_loaded = 1;
 
     /* 2. 查找子节点 inode_ref */
     rc = ext4_raw_inode_fill(cdir, &cino, &child);
-    if (rc != EOK) return -rc;
+    if (rc != EOK) goto out;
     rc = ext4_fs_get_inode_ref(fs, cino, &child_ref);
-
-    if (rc != EOK) return -rc;
-    if (rc != EOK) 
-    {
-        ext4_fs_put_inode_ref(&parent_ref);
-        return -rc;
-    }
+    if (rc != EOK) goto out;
+    child_loaded = 1;
 
     /* 3. 获取子节点在父目录下的名字 */
     const char *name = strrchr(cdir, '/');
@@ -1103,8 +1175,13 @@ vfs_ext4_unlinkat(const char* pdir, const char* cdir)
     rc = _ext4_unlink(mp, &parent_ref, &child_ref, name, name_len);
 
     /* 5. 释放inode_ref */
-    ext4_fs_put_inode_ref(&parent_ref);
-    ext4_fs_put_inode_ref(&child_ref);
+out:
+    if (child_loaded)
+        ext4_fs_put_inode_ref(&child_ref);
+    if (parent_loaded)
+        ext4_fs_put_inode_ref(&parent_ref);
+
+    vfs_ext4_mp_unlock(mp);
 
     return -rc;
 }

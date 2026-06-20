@@ -1936,14 +1936,18 @@ uint64_t ext4_fsize(ext4_file *file) { return file->fsize; }
 static int ext4_trans_get_inode_ref(const char *path, struct ext4_mountpoint *mp, struct ext4_inode_ref *inode_ref) {
     int r;
     ext4_file f;
+    uint32_t inode_no;
 
     r = ext4_generic_open2(&f, path, O_RDONLY, EXT4_DE_UNKNOWN, NULL, NULL);
     if (r != EOK)
         return r;
 
+    inode_no = f.inode;
+    ext4_fclose(&f);
+
     ext4_trans_start(mp);
 
-    r = ext4_fs_get_inode_ref(&mp->fs, f.inode, inode_ref);
+    r = ext4_fs_get_inode_ref(&mp->fs, inode_no, inode_ref);
     if (r != EOK) {
         ext4_trans_abort(mp);
         return r;
@@ -3012,8 +3016,17 @@ const ext4_direntry *ext4_dir_entry_next(ext4_dir *dir) {
         goto Finish;
     }
 
+    if (it.curr == NULL) {
+        dir->next_off = EXT4_DIR_ENTRY_OFFSET_TERM;
+        ext4_dir_iterator_fini(&it);
+        ext4_fs_put_inode_ref(&dir_inode);
+        goto Finish;
+    }
+
     memset(&dir->de.name, 0, sizeof(dir->de.name));
     name_length = ext4_dir_en_get_name_len(&dir->f.mp->fs.sb, it.curr);
+    if (name_length >= sizeof(dir->de.name))
+        name_length = sizeof(dir->de.name) - 1;
     memcpy(&dir->de.name, it.curr->name, name_length);
 
     /* Directly copying the content isn't safe for Big-endian targets*/

@@ -144,6 +144,19 @@ void set_block_metadata(uint64 addr, int order)
     }
 }
 
+static void set_block_refcnt(uint64 addr, int order, int refcnt)
+{
+    uint64 start_page_idx = (addr - buddy_sys.mem_start) / PGSIZE;
+    uint64 page_count = 1UL << order;
+
+    for (uint64 i = 0; i < page_count; i++)
+    {
+        uint64 current_page_idx = start_page_idx + i;
+        if (current_page_idx < buddy_sys.total_pages)
+            buddy_sys.nodes[current_page_idx].refcnt = refcnt;
+    }
+}
+
 /**
  * @brief 初始化伙伴系统
  * @param start 内存起始地址
@@ -190,6 +203,7 @@ int buddy_init(uint64 start, uint64 end)
         // 设置特殊元数据标记
         buddy_sys.nodes[page_idx].order = -1; // 特殊值表示元数据页面
         buddy_sys.nodes[page_idx].addr = page_addr;
+        buddy_sys.nodes[page_idx].refcnt = 0;
     }
 
     // 可用内存从元数据之后开始
@@ -288,6 +302,7 @@ void *buddy_alloc(int order)
                 // 初始化伙伴节点
                 buddy_node->addr = buddy_addr;
                 buddy_node->order = current_order;
+                buddy_node->refcnt = 0;
                 buddy_node->elem.prev = NULL;
                 buddy_node->elem.next = NULL;
 
@@ -312,6 +327,7 @@ void *buddy_alloc(int order)
 
             // 设置整个分配块的元数据
             set_block_metadata(addr, order);
+            set_block_refcnt(addr, order, 1);
 
             // 标记为已使用
             set_buddy_used(addr, order);
@@ -610,6 +626,19 @@ void pmem_free_pages(void *ptr, int npages)
         return;
     }
 
+    if (actual_order == 0)
+    {
+        if (buddy_sys.nodes[page_idx].refcnt > 1)
+        {
+            buddy_sys.nodes[page_idx].refcnt--;
+            return;
+        }
+        if (buddy_sys.nodes[page_idx].refcnt == 1)
+        {
+            buddy_sys.nodes[page_idx].refcnt = 0;
+        }
+    }
+
     // 检查是否已经被释放（重复释放检查）
     uint64 start_page = (block_start - buddy_sys.mem_start) / PGSIZE;
     uint64 end_page = start_page + actual_pages;
@@ -635,7 +664,33 @@ void pmem_free_pages(void *ptr, int npages)
     }
 
     // 使用实际块起始地址调用buddy_free
+    set_block_refcnt(block_start, actual_order, 0);
     buddy_free((void *)block_start, actual_order);
+}
+
+void pmem_inc_ref(void *ptr)
+{
+    uint64 addr;
+    uint64 page_idx;
+
+    if (!ptr)
+        return;
+
+    addr = (uint64)ptr;
+    if (addr < buddy_sys.mem_start || addr >= buddy_sys.mem_end)
+        return;
+
+    page_idx = (addr - buddy_sys.mem_start) / PGSIZE;
+    if (page_idx >= buddy_sys.total_pages)
+        return;
+
+    if (buddy_sys.nodes[page_idx].order != 0)
+        return;
+
+    if (buddy_sys.nodes[page_idx].refcnt <= 0)
+        buddy_sys.nodes[page_idx].refcnt = 1;
+
+    buddy_sys.nodes[page_idx].refcnt++;
 }
 
 /**

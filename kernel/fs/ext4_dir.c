@@ -517,7 +517,6 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name, uint3
      */
     if (pos != 0) {
         uint32_t offset = 0;
-        uint32_t block_size = ext4_sb_get_block_size(sb);
 
         /* Start from the first entry in block */
         struct ext4_dir_en *tmp_de = (void *) result.block.data;
@@ -525,20 +524,7 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name, uint3
 
         /* Find direct predecessor of removed entry */
         while ((offset + de_len) < pos) {
-            /* Guard against corrupted entry lengths */
-            if (de_len == 0 || de_len > block_size) {
-                ext4_dbg(DEBUG_DIR,
-                         DBG_WARN "Corrupted directory entry during remove: "
-                                  "de_len=%" PRIu16 "\n",
-                         de_len);
-                return EIO;
-            }
-            offset += de_len;
-            if (offset >= block_size) {
-                ext4_dbg(DEBUG_DIR,
-                         DBG_WARN "Directory entry offset exceeded block size during remove\n");
-                return EIO;
-            }
+            offset += ext4_dir_en_get_entry_len(tmp_de);
             tmp_de = (void *) (result.block.data + offset);
             de_len = ext4_dir_en_get_entry_len(tmp_de);
         }
@@ -579,22 +565,6 @@ int ext4_dir_try_insert_entry(struct ext4_sblock *sb, struct ext4_inode_ref *ino
         uint16_t rec_len = ext4_dir_en_get_entry_len(start);
         uint8_t itype = ext4_dir_en_get_inode_type(sb, start);
 
-        /* Validate rec_len to protect against corrupted directory entries */
-        if (rec_len == 0 || rec_len > block_size) {
-            ext4_dbg(DEBUG_DIR,
-                     DBG_WARN "Corrupted directory entry: "
-                              "rec_len=%" PRIu16 " block_size=%" PRIu32 "\n",
-                     rec_len, block_size);
-            return EIO;
-        }
-        if ((uint8_t *)start + rec_len > (uint8_t *)stop) {
-            ext4_dbg(DEBUG_DIR,
-                     DBG_WARN "Directory entry exceeds block boundary: "
-                              "rec_len=%" PRIu16 "\n",
-                     rec_len);
-            return EIO;
-        }
-
         /* If invalid and large enough entry, use it */
         if ((inode == 0) && (itype != EXT4_DIRENTRY_DIR_CSUM) && (rec_len >= required_len)) {
             ext4_dir_write_entry(sb, start, rec_len, child, name, name_len);
@@ -609,31 +579,11 @@ int ext4_dir_try_insert_entry(struct ext4_sblock *sb, struct ext4_inode_ref *ino
             uint16_t used_len;
             used_len = ext4_dir_en_get_name_len(sb, start);
 
-            /* Validate name_len to protect against corrupted entries.
-             * The name must fit inside the entry, accounting for the
-             * fixed-size header (8 bytes) and alignment padding (up to 3 bytes). */
-            if (used_len > rec_len - 8) {
-                ext4_dbg(DEBUG_DIR,
-                         DBG_WARN "Corrupted directory entry name_len: "
-                                  "used_len=%" PRIu16 " rec_len=%" PRIu16 "\n",
-                         used_len, rec_len);
-                return EIO;
-            }
-
             uint16_t sz;
             sz = sizeof(struct ext4_fake_dir_entry) + used_len;
 
             if ((used_len % 4) != 0)
                 sz += 4 - (used_len % 4);
-
-            /* After alignment, sz must not exceed rec_len */
-            if (sz > rec_len) {
-                ext4_dbg(DEBUG_DIR,
-                         DBG_WARN "Directory entry too small after alignment: "
-                                  "sz=%" PRIu16 " rec_len=%" PRIu16 "\n",
-                         sz, rec_len);
-                return EIO;
-            }
 
             uint16_t free_space = rec_len - sz;
 
@@ -666,7 +616,6 @@ int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb, siz
 
     /* Set upper bound for cycling */
     uint8_t *addr_limit = block->data + ext4_sb_get_block_size(sb);
-    uint32_t block_size = ext4_sb_get_block_size(sb);
 
     /* Walk through the block and check entries */
     while ((uint8_t *) de < addr_limit) {
@@ -690,11 +639,7 @@ int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb, siz
         uint16_t de_len = ext4_dir_en_get_entry_len(de);
 
         /* Corrupted entry */
-        if (de_len == 0 || de_len > block_size)
-            return EINVAL;
-
-        /* Prevent out-of-bounds access from corrupted entry length */
-        if ((uint8_t *) de + de_len > addr_limit)
+        if (de_len == 0)
             return EINVAL;
 
         /* Jump to next entry */

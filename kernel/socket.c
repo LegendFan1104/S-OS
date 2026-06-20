@@ -69,6 +69,8 @@
 
 int sock_bind(struct socket *sock, struct sockaddr_in *addr, int addrlen)
 {
+    (void)addrlen;
+
     // 检查套接字状态
     if (sock->state != SOCKET_UNBOUND)
     {
@@ -80,7 +82,7 @@ int sock_bind(struct socket *sock, struct sockaddr_in *addr, int addrlen)
     {
         addr->sin_port = 2000;
     }
-    memmove(&sock->local_addr, &addr, sizeof(struct sockaddr_in));
+    memmove(&sock->local_addr, addr, sizeof(struct sockaddr_in));
     sock->state = SOCKET_BOUND; ///< 设置状态为已绑定
     return 0;
 }

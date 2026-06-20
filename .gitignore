@@ -28,12 +28,25 @@ sdcard-la.img
 *.swo
 *~
 
+# Local tooling and workspace metadata
+.codex/
+.codex-bridge/
+.claude/
+
 # OS files
 .DS_Store
 
 tmp/
 
 CLAUDE.md
+
+# Local archives and helper status files
+*.tar
+*.exit
+docker_exec_probe.err
+docker_exec_probe.out
+docker_probe.txt
+hostname.from.sos3.txt
 
 cal_lines.sh
 disasm_kernel.sh
@@ -42,7 +55,10 @@ virt_la_debug.sh
 
 sdcard-contents/
 sdcard-extracted/
-
-# Generated init_code headers
-include/kernel/rv_init_code.h
-include/kernel/la_init_code.h
+workspace-export/
+workspace-export*/
+workspace-from-container/
+workspace-from-container*/
+workspace-src-export/
+base-rv.img
+base-la.img

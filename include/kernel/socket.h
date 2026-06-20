@@ -21,8 +21,8 @@ struct sockaddr
 
 enum sock_type
 {
-    SOCK_DGRAM = 1,
-    SOCK_STREAM = 2,
+    SOCK_STREAM = 1,
+    SOCK_DGRAM = 2,
 };
 
 enum socket_state
@@ -43,6 +43,9 @@ struct socket
     struct sockaddr_in local_addr;  // 本地地址
     struct sockaddr_in remote_addr; // 远程地址
     struct timeval rcv_timeout;
+    int backlog;
+    int pending_conn;
+    struct sockaddr_in pending_remote_addr;
 };
 
 // 最大数据包大小
@@ -67,6 +70,8 @@ int sock_bind(struct socket *sock, struct sockaddr_in *addr, int addrlen);
 #define PF_UNIX PF_LOCAL /* POSIX name for PF_LOCAL.  */
 #define PF_FILE PF_LOCAL /* Another non-standard name for PF_LOCAL.  */
 #define PF_INET 2        /* IP protocol family.  */
+#define PF_INET6 10      /* IPv6 protocol family. */
+#define PF_ALG 38        /* Kernel crypto API. */
 
 #define SOL_SOCKET 1
 #define SO_ACCEPTCONN 30
@@ -84,9 +89,12 @@ int sock_bind(struct socket *sock, struct sockaddr_in *addr, int addrlen);
 #define SO_SNDLOWAT 19
 #define SO_TYPE 3
 
-#define SOCK_CLOEXEC	O_CLOEXEC
-#define O_NONBLOCK	    00004000
-#define SOCK_NONBLOCK	O_NONBLOCK
+#define SOCK_CLOEXEC 02000000
+#define O_NONBLOCK   00004000
+#define SOCK_NONBLOCK O_NONBLOCK
+
+#define IPPROTO_TCP 6
+#define IPPROTO_UDP 17
 
 
 #endif
