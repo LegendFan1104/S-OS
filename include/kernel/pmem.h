@@ -3,38 +3,36 @@
 #include "types.h"
 #include "list.h"
 
-// 伙伴系统相关定义
-#define MAX_ORDER 11 // 最大阶数，支持2^11 = 2048个页面
+#define MAX_ORDER 11
 #define BUDDY_MAX_ORDER 11
 
-// 伙伴系统空闲链表节点
-// 修改 buddy_node_t 结构
 typedef struct buddy_node
 {
-    uint64 addr;           // 块起始地址
-    int order;             // 阶数
-    struct list_elem elem; // 链表元素
+    uint64 addr;
+    int order;
+    int refcnt;
+    struct list_elem elem;
 } buddy_node_t;
-// 伙伴系统管理结构
+
 typedef struct buddy_system
 {
-    uint64 mem_start;                            // 内存起始地址
-    uint64 mem_end;                              // 内存结束地址
-    uint64 total_pages;                          // 总页面数
-    uint64 *bitmap;                              // 位图
-    buddy_node_t *nodes;                         // 元数据节点数组
-    struct list free_lists[BUDDY_MAX_ORDER + 1]; // 空闲链表数组
+    uint64 mem_start;
+    uint64 mem_end;
+    uint64 total_pages;
+    uint64 *bitmap;
+    buddy_node_t *nodes;
+    struct list free_lists[BUDDY_MAX_ORDER + 1];
 } buddy_system_t;
-// 对外函数
+
 void pmem_init();
 void *pmem_alloc_pages(int npages);
 void pmem_free_pages(void *ptr, int npages);
+void pmem_inc_ref(void *ptr);
 void *kmalloc(uint64 size);
 void *kcalloc(uint n, uint64 size);
 void kfree(void *ptr);
 void *kalloc(void);
 
-// 伙伴系统内部函数
 int buddy_init(uint64 start, uint64 end);
 void *buddy_alloc(int order);
 void buddy_free(void *ptr, int order);

@@ -231,8 +231,23 @@ void dir_init(void)
     else
         free_inode(ip);
 
+    if ((ip=namei("/dev/shm")) == NULL)
+        vfs_ext4_mkdir("/dev/shm", 0777);
+    else
+        free_inode(ip);
+
+    if ((ip=namei("/ltp-shm")) == NULL)
+        vfs_ext4_mkdir("/ltp-shm", 0777);
+    else
+        free_inode(ip);
+
     if ((ip=namei("proc/self/exe")) == NULL)
         vfs_ext4_mkdir("proc/self/exe", 0777);
+    else
+        free_inode(ip);
+
+    if ((ip=namei("proc/self/maps")) == NULL)
+        vfs_ext4_mkdir("proc/self/maps", 0777);
     else
         free_inode(ip);
 
@@ -241,11 +256,10 @@ void dir_init(void)
     else
         free_inode(ip);
 
-    if ((ip=namei("/tmp")) != NULL)
-    {
-        vfs_ext4_rm("tmp");
+    if ((ip=namei("/tmp")) == NULL)
+        vfs_ext4_mkdir("/tmp", 0777);
+    else
         free_inode(ip);
-    }
 
     if ((ip=namei("/usr")) == NULL)
         vfs_ext4_mkdir("/usr", 0777);

@@ -70,7 +70,7 @@ union file_data
  */
 struct file 
 {
-    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE,FD_SOCKET, FD_BUSYBOX } f_type;
+    enum { FD_NONE, FD_PIPE, FD_REG, FD_DEVICE, FD_SOCKET, FD_BUSYBOX, FD_EPOLL, FD_EVENTFD, FD_SIGNALFD, FD_TIMERFD, FD_PIDFD } f_type;
     uint8 f_mode;         ///< 访问模式
     uint f_flags;         ///< 打开文件时的标志（如O_APPEND等）
     uint64 f_pos;         ///< 偏移量
@@ -81,6 +81,7 @@ struct file
     // int f_owner;          ///< 拥有这个文件的进程ID或进程标识
     char f_path[MAXPATH]; ///< 文件完整路径，便于调试或日志，也可能有管理作用
 
+    uint64 f_time_update_sec;
     uint32 removed; /* 
                      * when calling sys_unlinkat, mark as removed;
                      * when file ref is 0, REMOVE it in generic_fileclose

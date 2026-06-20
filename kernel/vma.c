@@ -140,6 +140,9 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
 {
     proc_t *p = myproc();
     int perm = get_mmapperms(prot);
+    // assert(start == 0, "uvm_mmap: 0");
+    //  assert(flags & MAP_PRIVATE, "uvm_mmap: 1");
+    // len += PGSIZE;
     struct file *f = fd == -1 ? NULL : p->ofile[fd];
 
     if (fd != -1 && f == NULL)
@@ -147,73 +150,111 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
     struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
     if (!(flags & MAP_FIXED))
         start = vma->addr;
+    if (-1 != fd)
+    {
+        int ret = vfs_ext4_lseek(f, offset, SEEK_SET); //< 设置文件位置指针到指定偏移量
+        if (ret < 0)
+        {
+            DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
+            return ret;
+        }
+    }
+    else
+    {
+        return start;
+    }
     if (vma == NULL)
         return -1;
     assert(len, "len is zero!");
-
-    if (fd != -1)
-    {
-        int ret = vfs_ext4_lseek(f, offset, SEEK_SET);
-        if (ret < 0)
-            return ret;
-    }
-
+    // /// @todo 逻辑有问题
     uint64 i;
-    for (i = 0; i < len; i += PGSIZE)
-    {
-        /* 确保页表中有映射。MAP_FIXED 落入预留 VMA 时
-         * alloc_vma 不会分配物理页，需要在这里补上。 */
-        uint64 pa = experm(p->pagetable, start + i, perm);
-        if (pa == 0)
-        {
-            if (!uvmalloc1(p->pagetable, start + i, start + i + PGSIZE, perm))
-            {
-                panic("mmap: uvmalloc1 failed");
-                return -1;
-            }
-            pa = experm(p->pagetable, start + i, perm);
-            if (pa == 0)
-            {
-                panic("mmap: page still unmapped after alloc");
-                return -1;
-            }
-        }
 
-        if (fd == -1)
+    //< 特殊处理一下，如果len大于文件大小，就把len减小到文件大小
+    //< !把下面处理len的代码块注释掉，也是可以跑的!
+    // uint64 file_size = 0;
+    // if (fd != -1)
+    // {
+    //     struct ext4_file *efile = (struct ext4_file *)f->f_data.f_vnode.data;
+    //     file_size = efile->fsize; // 实际文件大小
+    // }
+
+    // // 新增：调整映射长度（核心修复）
+    // size_t aligned_len = PGROUNDUP(len);
+    // if (fd != -1 && len > file_size)
+    // {
+    //     // 文件映射：禁止超过文件实际大小
+    //     len = PGROUNDUP(file_size); // 对齐到页边界
+    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Truncate mmap len to file size: 0x%x\n", len);
+    // }
+
+    for (i = 0; i < len; i += PGSIZE) //< 从offset开始读len字节  //< ?为什么la glibc一进来i就是0x8c000
+    {
+        // LOG_LEVEL(LOG_ERROR,"[mmap] i=%x",i);
+        if ((flags & MAP_SHARED) && fd != -1)
         {
-            /* 匿名映射：uvmalloc1 已清零，无需额外处理 */
-            continue;
+            pte_t *shared_pte = walk(p->pagetable, start + i, 0);
+            if (shared_pte == NULL || (*shared_pte & PTE_V) == 0)
+            {
+                char *shared_mem = (char *)pmem_alloc_pages(1);
+                if (shared_mem == NULL)
+                    return -1;
+                memset(shared_mem, 0, PGSIZE);
+                if (mappages(p->pagetable, start + i, (uint64)shared_mem, PGSIZE, perm | PTE_U | PTE_D) != 1)
+                {
+                    pmem_free_pages(shared_mem, 1);
+                    return -1;
+                }
+            }
         }
+        uint64 pa = experm(p->pagetable, start + i, perm); //< 检查是否可以访问start + i，如果可以就返回start + i所在页的物理地址
+        // assert(pa != 0, "pa is null!,va:%p", start + i);
 
         int remaining = len - i;
         int to_read = (remaining > PGSIZE) ? PGSIZE : remaining;
 
+        // 读取文件内容（如果 to_read > 0）
         int bytes_read = 0;
         if (to_read > 0)
         {
+            // uint64 orig_pos = f->f_pos;
+            // int ret = vfs_ext4_lseek(f,start + i, SEEK_SET); //< 设置文件位置指针到指定偏移量
+            // if (ret < 0)
+            // {
+            //     DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
+            //     return ret;
+            // }
             bytes_read = get_file_ops()->read(f, start + i, to_read);
+            // vfs_ext4_lseek(f, orig_pos, SEEK_SET);
+            // bytes_read = vfs_ext4_readat(f,0,pa,to_read,offset+i); //< read比vfs_ext4_readat好，vfs_ext4_readat如果offset大于size会panic。之后删掉这行吧
             if (bytes_read < 0)
             {
+                // 错误处理（如取消映射并返回）
                 panic("bytes_read null");
                 return -1;
             }
         }
 
-        /* 文件内容不足时，填充零 */
+        // 文件内容不足时，填充零
         if (bytes_read < to_read)
         {
             memset((void *)((pa + bytes_read) | dmwin_win0), 0, to_read - bytes_read);
         }
 
-        /* 页面剩余部分清零 */
+        // 页面剩余部分清零
         if (to_read < PGSIZE)
         {
             memset((void *)((pa + to_read) | dmwin_win0), 0, PGSIZE - to_read);
         }
     }
-
-    if (fd != -1)
-        get_file_ops()->dup(f);
+    // if (aligned_len > len)
+    // {
+    //     size_t extra_len = aligned_len - len;
+    //     uint64 prot_start = start + len;
+    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Set PROT_NONE for extra pages: 0x%llx-0x%llx\n",
+    //                     prot_start, prot_start + extra_len);
+    //     vm_protect(p->pagetable, prot_start, extra_len, PROT_NONE);
+    // }
+    get_file_ops()->dup(f);
     return start;
 }
 
@@ -349,7 +390,9 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         start = PGROUNDDOWN(find_vma->addr - len);
 
     int isalloc = 0;
-    if ((flags & MAP_ALLOC) || (fd != -1))
+    if (flags & MAP_ALLOC)
+        isalloc = 1;
+    else if (fd != -1 && !(flags & MAP_SHARED))
         isalloc = 1;
 
     vma = alloc_vma(p, MMAP, start, len, perm, isalloc, 0);
@@ -358,6 +401,7 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         panic("alloc_mmap_vma");
         return NULL;
     }
+    vma->flags = flags;
     vma->fd = fd;
     vma->f_off = offset;
     return vma;
@@ -428,6 +472,7 @@ struct vma *alloc_vma(struct proc *p, enum segtype type, uint64 addr, int64 sz, 
     vma->size = sz;
     vma->perm = perm;
     vma->end = end;
+    vma->flags = 0;
     vma->fd = -1;
     vma->f_off = 0;
     vma->type = type;
@@ -542,6 +587,11 @@ bad:
     return NULL;
 }
 
+static int vma_is_shared_mapping(struct vma *vma)
+{
+    return vma->type == MMAP && (vma->flags & MAP_SHARED);
+}
+
 int vma_map(pgtbl_t old, pgtbl_t new, struct vma *vma)
 {
     uint64 start = vma->addr;
@@ -552,6 +602,19 @@ int vma_map(pgtbl_t old, pgtbl_t new, struct vma *vma)
     while (start < vma->end)
     {
         pte = walk(old, start, 0);
+        if (vma_is_shared_mapping(vma) && vma->fd == -1 && (pte == NULL || (*pte & PTE_V) == 0))
+        {
+            mem = (char *)pmem_alloc_pages(1);
+            if (mem == NULL)
+                goto bad;
+            memset(mem, 0, PGSIZE);
+            if (mappages(old, start, (uint64)mem, PGSIZE, vma->perm | PTE_U | PTE_D) != 1)
+            {
+                pmem_free_pages(mem, 1);
+                goto bad;
+            }
+            pte = walk(old, start, 0);
+        }
         if (pte == NULL)
         {
             // LazyLoad VMA: 页面可能还没有分配，跳过
@@ -574,8 +637,20 @@ int vma_map(pgtbl_t old, pgtbl_t new, struct vma *vma)
             continue;
         }
         
-        pa = PTE2PA(*pte) | dmwin_win0;
+        pa = PTE2PA(*pte);
         flags = PTE_FLAGS(*pte);
+        if (vma_is_shared_mapping(vma))
+        {
+            pmem_inc_ref((void *)(pa | dmwin_win0));
+            if (mappages(new, start, pa | dmwin_win0, PGSIZE, flags) != 1)
+            {
+                pmem_free_pages((void *)(pa | dmwin_win0), 1);
+                goto bad;
+            }
+            start += PGSIZE;
+            continue;
+        }
+        pa |= dmwin_win0;
         mem = (char *)pmem_alloc_pages(1);
         if (mem == NULL)
             goto bad;
@@ -604,24 +679,19 @@ int free_vma_list(struct proc *p)
     struct vma *vma = vma_head->next;
     while (vma != vma_head)
     {
-        /* SHARE 类型的 VMA 物理页由多个进程共享，不能在此释放。
-         * 共享内存页的生命周期由 shmctl(IPC_RMID) 管理。 */
-        if (vma->type != SHARE)
+        uint64 a;
+        pte_t *pte;
+        for (a = vma->addr; a < vma->end; a += PGSIZE)
         {
-            uint64 a;
-            pte_t *pte;
-            for (a = vma->addr; a < vma->end; a += PGSIZE)
-            {
-                if ((pte = walk(p->pagetable, a, 0)) == NULL)
-                    continue;
-                if ((*pte & PTE_V) == 0)
-                    continue;
-                if (PTE_FLAGS(*pte) == PTE_V)
-                    continue;
-                uint64 pa = PTE2PA(*pte) | dmwin_win0;
-                pmem_free_pages((void *)pa, 1);
-                *pte = 0;
-            }
+            if ((pte = walk(p->pagetable, a, 0)) == NULL)
+                continue;
+            if ((*pte & PTE_V) == 0)
+                continue;
+            if (PTE_FLAGS(*pte) == PTE_V)
+                continue;
+            uint64 pa = PTE2PA(*pte) | dmwin_win0;
+            pmem_free_pages((void *)pa, 1);
+            *pte = 0;
         }
         vma = vma->next;
         pmem_free_pages(vma->prev, 1);

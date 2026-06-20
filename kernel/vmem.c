@@ -150,9 +150,8 @@ uint64 walkaddr(pgtbl_t pt, uint64 va)
 {
     pte_t *pte;
     uint64 pa;
-    if (va > MAXVA)
+    if (va >= MAXVA)
     {
-        panic("va:%p out of range", va);
         return 0;
     }
     pte = walk(pt, va, 0);
@@ -471,11 +470,11 @@ int fetchstr(uint64 addr, char *buf, int max)
  */
 int copyin(pgtbl_t pt, char *dst, uint64 srcva, uint64 len)
 {
-    if (srcva > MAXVA)
-        panic("copyin:va:%p > MAXVA", srcva);
     uint64 n, va0, pa0;
     while (len > 0)
     {
+        if (srcva >= MAXVA)
+            return -1;
         va0 = PGROUNDDOWN(srcva);
         pa0 = walkaddr(pt, va0);
         if (pa0 == 0)
@@ -509,6 +508,8 @@ int copyinstr(pgtbl_t pt, char *dst, uint64 srcva, uint64 max)
     /*循环直到遇到终止符或达到max限制*/
     while (got_null == 0 && max > 0)
     {
+        if (srcva >= MAXVA)
+            return -1;
         va0 = PGROUNDDOWN(srcva);
         pa0 = walkaddr(pt, va0);
         if (pa0 == 0)
@@ -557,13 +558,12 @@ int copyinstr(pgtbl_t pt, char *dst, uint64 srcva, uint64 max)
  */
 int copyout(pgtbl_t pt, uint64 dstva, char *src, uint64 len)
 {
-    if (dstva > MAXVA)
-        panic("copyout: dstva > MAXVA");
-
     uint64 n, va0, pa0;
 
     while (len > 0)
     {
+        if (dstva >= MAXVA)
+            return -1;
         va0 = PGROUNDDOWN(dstva);
         pa0 = walkaddr(pt, va0);
         if (pa0 == 0)

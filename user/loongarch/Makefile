@@ -6,6 +6,18 @@
 CFLAGS += -I../include
 ASFLAGS += -I../include
 
+ifeq ($(LOONGARCH_TEST_PROFILE),ltp-musl)
+CFLAGS += -DTEST_PROFILE_LTP_MUSL=1
+endif
+
+ifeq ($(LOONGARCH_TEST_PROFILE),ltp-glibc)
+CFLAGS += -DTEST_PROFILE_LTP_GLIBC=1
+endif
+
+ifeq ($(LOONGARCH_TEST_PROFILE),submit)
+CFLAGS += -DTEST_PROFILE_SUBMIT=1
+endif
+
 # card source
 c_src := $(wildcard *.c) #user.c
 s_src := $(wildcard *.S) #usys.S

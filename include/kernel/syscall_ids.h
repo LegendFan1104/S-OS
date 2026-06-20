@@ -3,15 +3,22 @@
 
 #define SYS_write   64
 #define SYS_getpid  172
+#define SYS_eventfd2 19
+#define SYS_epoll_create1 20
+#define SYS_epoll_ctl 21
+#define SYS_epoll_pwait 22
 #define SYS_fork    300
 #define SYS_clone   220
 #define SYS_exit    93
 #define SYS_wait    260
 #define SYS_gettimeofday 169
+#define SYS_getitimer 102
 #define SYS_sleep   101 
 #define SYS_brk     214 
 #define SYS_times   153
 #define SYS_uname   160
+#define SYS_sched_setaffinity 122
+#define SYS_sched_getaffinity 123
 #define SYS_sched_yield 124
 #define SYS_getppid 173
 #define SYS_execve  221
@@ -20,6 +27,10 @@
 #define SYS_read    63
 #define SYS_dup     23
 #define SYS_openat  56
+#define SYS_fchmod  52
+#define SYS_fchmodat 53
+#define SYS_fchownat 54
+#define SYS_fchown  55
 #define SYS_mknod   16
 #define SYS_dup3    24
 #define SYS_mmap    222
@@ -33,6 +44,7 @@
 #define SYS_mount 40
 #define SYS_umount 39
 #define SYS_unlinkat 35
+#define SYS_symlinkat 36
 #define SYS_shutdown 1000
 // busybox
 #define SYS_set_tid_address 96
@@ -41,6 +53,7 @@
 #define SYS_ioctl           29
 #define SYS_exit_group      94
 #define SYS_clock_gettime   113 
+#define SYS_clock_getres    114
 #define SYS_writev          66
 #define SYS_readv           65
 #define SYS_syslog          116
@@ -68,6 +81,7 @@
 #define SYS_setuid  146
 #define SYS_settimer 103
 #define SYS_pread   67
+#define SYS_signalfd4 74
 #define SYS_ppoll 73
 
 // busybox补全调用
@@ -81,6 +95,7 @@
 #define SYS_mprotect    226
 #define SYS_getegid         177
 #define SYS_socket      198
+#define SYS_timerfd_create 85
 #define SYS_bind        200
 #define SYS_listen      201
 #define SYS_getsockname 204
@@ -90,7 +105,14 @@
 #define SYS_connect     203
 #define SYS_accept      202
 #define SYS_statfs      43
+#define SYS_setpgid     154
+#define SYS_getpgid     155
+#define SYS_getsid      156
 #define SYS_setsid      157 
+#define SYS_getgroups   158
+#define SYS_getresuid   148
+#define SYS_getresgid   150
+#define SYS_umask       166
 
 // libc-test glibc调用
 #define SYS_mremap      216
@@ -98,17 +120,15 @@
 // libcbench调用
 #define SYS_madvise     233
 
-// iozone 调用
+//iozone 调用
 #define SYS_sync        81
 #define SYS_ftruncate   46
 #define SYS_fsync       82
 #define SYS_fdatasync   83
-#define SYS_semget      190
-#define SYS_semctl      191
-#define SYS_semtimedop  192
-#define SYS_shmget      194
+#define SYS_shmget      194 
 #define SYS_shmctl      195
 #define SYS_shmat       196
+#define SYS_pidfd_open  434
 #define SYS_pselect6_time32 72
 
 // lmbench
@@ -130,15 +150,22 @@ static inline const char* get_syscall_name(int num)
     switch(num) {
         case SYS_write: return "write";
         case SYS_getpid: return "getpid";
+        case SYS_eventfd2: return "eventfd2";
+        case SYS_epoll_create1: return "epoll_create1";
+        case SYS_epoll_ctl: return "epoll_ctl";
+        case SYS_epoll_pwait: return "epoll_pwait";
         case SYS_fork: return "fork";
         case SYS_clone: return "clone";
         case SYS_exit: return "exit";
         case SYS_wait: return "wait";
         case SYS_gettimeofday: return "gettimeofday";
+        case SYS_getitimer: return "getitimer";
         case SYS_sleep: return "sleep";
         case SYS_brk: return "brk";
         case SYS_times: return "times";
         case SYS_uname: return "uname";
+        case SYS_sched_setaffinity: return "sched_setaffinity";
+        case SYS_sched_getaffinity: return "sched_getaffinity";
         case SYS_sched_yield: return "sched_yield";
         case SYS_getppid: return "getppid";
         case SYS_execve: return "execve";
@@ -147,6 +174,10 @@ static inline const char* get_syscall_name(int num)
         case SYS_read: return "read";
         case SYS_dup: return "dup";
         case SYS_openat: return "openat";
+        case SYS_fchmod: return "fchmod";
+        case SYS_fchmodat: return "fchmodat";
+        case SYS_fchownat: return "fchownat";
+        case SYS_fchown: return "fchown";
         case SYS_mknod: return "mknod";
         case SYS_dup3: return "dup3";
         case SYS_mmap: return "mmap";
@@ -160,6 +191,7 @@ static inline const char* get_syscall_name(int num)
         case SYS_mount: return "mount";
         case SYS_umount: return "umount";
         case SYS_unlinkat: return "unlinkat";
+        case SYS_symlinkat: return "symlinkat";
         case SYS_shutdown: return "shutdown";
         case SYS_set_tid_address: return "set_tid_address";
         case SYS_getuid: return "getuid";
@@ -167,6 +199,7 @@ static inline const char* get_syscall_name(int num)
         case SYS_ioctl: return "ioctl";
         case SYS_exit_group: return "exit_group";
         case SYS_clock_gettime: return "clock_gettime";
+        case SYS_clock_getres: return "clock_getres";
         case SYS_writev: return "writev";
         case SYS_readv: return "readv";
         case SYS_syslog: return "syslog";
@@ -190,6 +223,7 @@ static inline const char* get_syscall_name(int num)
         case SYS_setuid: return "setuid";
         case SYS_settimer: return "settimer";
         case SYS_pread: return "pread";
+        case SYS_signalfd4: return "signalfd4";
         case SYS_ppoll: return "ppoll";
         case SYS_sendfile64: return "sendfile64";
         case SYS_llseek: return "llseek";
@@ -198,6 +232,7 @@ static inline const char* get_syscall_name(int num)
         case SYS_rt_sigtimedwait: return "rt_sigtimedwait";
         case SYS_mprotect       : return "mprotect";
         case SYS_getegid        : return "getegid";
+        case SYS_timerfd_create : return "timerfd_create";
         case SYS_socket         : return "socket";
         case SYS_bind           : return "bind";
         case SYS_getsockname    : return "getsockname";
@@ -211,20 +246,25 @@ static inline const char* get_syscall_name(int num)
         case SYS_tkill          : return "tkill";
         case SYS_get_robust_list: return "get_robust_list";
         case SYS_statfs         : return "statfs";
+        case SYS_setpgid        : return "setpgid";
+        case SYS_getpgid        : return "getpgid";
+        case SYS_getsid         : return "getsid";
         case SYS_setsid         : return "setsid";
+        case SYS_getgroups      : return "getgroups";
+        case SYS_getresuid      : return "getresuid";
+        case SYS_getresgid      : return "getresgid";
+        case SYS_umask          : return "umask";
         case SYS_madvise        : return "madvise";
         case SYS_sync           : return "sync";
         case SYS_ftruncate      : return "ftruncate";
         case SYS_fsync          : return "fsync";
         case SYS_getrusage      : return "getrusage";
         case SYS_mremap         : return "mremap";
+        case SYS_pidfd_open     : return "pidfd_open";
         case SYS_clone3         : return "clone3";
         case SYS_shmget         : return "shmget";
-        case SYS_shmat          : return "shmat";
+        case SYS_shmat          : return "shmat";  
         case SYS_shmctl         : return "shmctl";
-        case SYS_semget         : return "semget";
-        case SYS_semctl         : return "semctl";
-        case SYS_semtimedop     : return "semtimedop";
         case SYS_pselect6_time32: return "pselect6_time32 ";
         default: return "unknown";
     }

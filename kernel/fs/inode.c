@@ -426,6 +426,17 @@ void get_absolute_path(const char *path, const char *cwd, char *absolute_path) {
     }
 
     /* 如果路径为空 (例如, ".." 在根目录下处理后, 或者 "." 处理后), 设为 "/" */
+    if (!strcmp(absolute_path, "/dev/shm"))
+    {
+        strcpy(absolute_path, "/ltp-shm");
+    }
+    else if (!strncmp(absolute_path, "/dev/shm/", 9))
+    {
+        char remapped[MAXPATH] = "/ltp-shm";
+        strcat(remapped, absolute_path + 8);
+        strcpy(absolute_path, remapped);
+    }
+
     if (strlen(absolute_path) == 0)
     {
         strcpy(absolute_path, "/"); // 警告: buffer 必须至少有2字节

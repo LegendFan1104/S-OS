@@ -55,6 +55,9 @@ struct ext4_buf {
     /**@brief   Whether or not buffer is on dirty list.*/
     bool on_dirty_list;
 
+    /**@brief   Whether or not buffer is currently linked in LRU tree.*/
+    bool on_lru_list;
+
     /**@brief   LBA tree node*/
     RB_ENTRY(ext4_buf) lba_node;
 
