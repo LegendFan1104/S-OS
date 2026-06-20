@@ -6,6 +6,22 @@
 RISCV_CFLAGS += -I../include
 RISCV_ASFLAGS += -I../include
 
+ifeq ($(RISCV_TEST_PROFILE),ltp-musl)
+RISCV_CFLAGS += -DTEST_PROFILE_LTP_MUSL=1
+endif
+
+ifeq ($(RISCV_TEST_PROFILE),ltp-glibc)
+RISCV_CFLAGS += -DTEST_PROFILE_LTP_GLIBC=1
+endif
+
+ifeq ($(RISCV_TEST_PROFILE),submit)
+RISCV_CFLAGS += -DTEST_PROFILE_SUBMIT=1
+endif
+
+ifeq ($(RISCV_TEST_PROFILE),probe)
+RISCV_CFLAGS += -DTEST_PROFILE_PROBE=1
+endif
+
 # card source
 c_src := $(wildcard *.c) #user.c
 s_src := $(wildcard *.S) #usys.S

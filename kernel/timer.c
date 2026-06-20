@@ -3,6 +3,7 @@
 #include "timer.h"
 #include "print.h"
 #include "process.h"
+#include "string.h"
 //#include "syscall.h"
 #include "vmem.h"
 #include "cpu.h"
@@ -18,21 +19,69 @@ extern proc_t pool[NPROC];
 struct spinlock tickslock;
 uint ticks;
 
+static uint64 timeval_to_clocks(const struct timeval *tv)
+{
+    return tv->sec * CLK_FREQ + tv->usec * (CLK_FREQ / 1000000);
+}
+
+static void refresh_process_timer(proc_t *p, uint64 now)
+{
+    uint64 interval;
+
+    if (!p->timer_active || now < p->alarm_ticks)
+        return;
+
+    p->sig_pending.__val[0] |= (1UL << SIGALRM);
+
+    interval = timeval_to_clocks(&p->itimer.it_interval);
+    if (interval == 0)
+    {
+        p->timer_active = 0;
+        p->alarm_ticks = 0;
+        memset(&p->itimer.it_value, 0, sizeof(p->itimer.it_value));
+        return;
+    }
+
+    do
+    {
+        p->alarm_ticks += interval;
+    } while (p->alarm_ticks <= now);
+}
+
 #define GOLDFISH_RTC_BASE 0x101000UL
-#define GOLDFISH_RTC_TIME_REG (*(volatile uint32_t *)((GOLDFISH_RTC_BASE + 0x00) | dmwin_win0))
+#define GOLDFISH_RTC_TIME_LOW_REG (*(volatile uint32_t *)((GOLDFISH_RTC_BASE + 0x00) | dmwin_win0))
+#define GOLDFISH_RTC_TIME_HIGH_REG (*(volatile uint32_t *)((GOLDFISH_RTC_BASE + 0x04) | dmwin_win0))
 #define LS7A_RTC 0x100d0100
 #define LS7A_RTC_TIME_REG (*(volatile uint32_t *)((LS7A_RTC + 0x00) | dmwin_win0))
 
-static uint32_t read_rtc(void) 
+static uint64
+read_rtc_seconds(void)
 {
 #ifdef RISCV
-    return GOLDFISH_RTC_TIME_REG;
+    uint32 hi0, hi1, lo;
+
+    do
+    {
+        hi0 = GOLDFISH_RTC_TIME_HIGH_REG;
+        lo = GOLDFISH_RTC_TIME_LOW_REG;
+        hi1 = GOLDFISH_RTC_TIME_HIGH_REG;
+    } while (hi0 != hi1);
+
+    return ((((uint64)hi1) << 32) | lo) / 1000000000ULL;
 #else
     return LS7A_RTC_TIME_REG;
 #endif
 }
 
-uint64 boot_time = 0x98856837c;
+static uint64
+sanitize_boot_time(uint64 rtc_sec)
+{
+    if (rtc_sec < 946684800ULL || rtc_sec > 4102444800ULL)
+        return 1735689600ULL;
+    return rtc_sec;
+}
+
+uint64 boot_time = 0;
 
 #if defined SBI
 extern void set_timer(uint64 stime); //< 通过sbi设置下一个时钟中断
@@ -48,10 +97,7 @@ timer_init(void)
     initlock(&tickslock, "time");
 
     ticks = 0;
-    /* @note 理论上，read_rtc就是要读出当前系统的时间了，我都设置了-rtc base=utc
-     * 但是这里很逆天，RV每次读出来的值都差距很大，LA值为0，只能一开始给定一个比较大的值+read_rtc了
-     */
-    boot_time += (uint64)read_rtc();
+    boot_time = sanitize_boot_time(read_rtc_seconds());
 #ifdef RISCV
     #if defined SBI //< 使用sbi
     w_sie(r_sie() | SIE_STIE); //< 虽然start已经设置了SIE_STIE,这里再设置一次
@@ -134,6 +180,14 @@ timer_tick(void)
     ticks++;
     wakeup(&ticks);
     release(&tickslock);
+    uint64 now = r_time();
+    for (proc_t *p = pool; p < pool + NPROC; p++)
+    {
+        acquire(&p->lock);
+        if (p->state != UNUSED)
+            refresh_process_timer(p, now);
+        release(&p->lock);
+    }
 #ifdef RISCV
     set_next_timeout();
 #endif

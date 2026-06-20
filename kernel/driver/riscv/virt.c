@@ -20,6 +20,9 @@ static struct disk
     {
         struct buf *b;
         char status;
+        uint blockno;
+        uint64 sector;
+        int write;
     } info[NUM];
 
     // disk command headers.
@@ -225,6 +228,9 @@ int virtio_rw(struct buf *b, int write)
     disk.desc[idx[1]].next = idx[2];
 
     disk.info[idx[0]].status = 0xff; // device writes 0 on success
+    disk.info[idx[0]].blockno = b->blockno;
+    disk.info[idx[0]].sector = sector;
+    disk.info[idx[0]].write = write;
     disk.desc[idx[2]].addr = (uint64)&disk.info[idx[0]].status;
     disk.desc[idx[2]].len = 1;
     disk.desc[idx[2]].flags = VRING_DESC_F_WRITE; // device writes the status
@@ -279,7 +285,12 @@ void virtio_disk_intr()
         if (disk.info[id].status != 0)
         {
             // 打印状态值和错误类型
-            printf("Request id=%d, status=0x%x\n", id, disk.info[id].status);
+            printf("Request id=%d, status=0x%x, op=%s, blockno=%u, sector=%p\n",
+                   id,
+                   disk.info[id].status,
+                   disk.info[id].write ? "write" : "read",
+                   disk.info[id].blockno,
+                   disk.info[id].sector);
             if (disk.info[id].status != 0)
             {
                 printf("Error type: %s\n",

@@ -9,6 +9,7 @@
 #include "vma.h"
 #include "thread.h"
 #include "futex.h"
+#include "errno-base.h"
 #ifdef RISCV
 #include "riscv.h"
 #include "riscv_memlayout.h"
@@ -140,13 +141,21 @@ found:
     p->ktime = 1;
     p->utime = 1;
     p->pid = allocpid();
+    p->pgid = p->pid;
+    p->sid = p->pid;
     p->uid = 0;
     p->gid = 0;
+    p->umask = 0022;
+    p->oom_score_adj = 0;
     p->thread_num = 0;
     p->state = USED;
     p->exit_state = 0;
     p->vma = NULL;
     p->killed = 0;
+    p->term_signal = 0;
+    memset(&p->itimer, 0, sizeof(p->itimer));
+    p->alarm_ticks = 0;
+    p->timer_active = 0;
     p->clear_child_tid = 0;
     p->ofn = (struct rlimit){NOFILE, NOFILE};
     // 初始化文件描述符数组
@@ -240,6 +249,7 @@ static void freeproc(proc_t *p)
             vmunmap(kernel_pagetable, t->kstack, 1, 0); ///< 释放线程的内核栈
             kfree((void *)t->kstack_pa);
         }
+        list_remove(e);
         list_push_front(&free_thread, e);
         e = tmp;
     }
@@ -262,6 +272,8 @@ static void freeproc(proc_t *p)
     }
 
     p->pid = 0;
+    p->pgid = 0;
+    p->sid = 0;
     p->state = UNUSED;
     p->main_thread->state = t_UNUSED;
     p->main_thread = NULL;
@@ -271,6 +283,7 @@ static void freeproc(proc_t *p)
     p->virt_addr = 0;
     p->exit_state = 0;
     p->killed = 0;
+    p->term_signal = 0;
     
     if (debug_buddy)
         printf("freeproc: process %d freed successfully\n", (int)(p - pool));
@@ -413,6 +426,16 @@ void scheduler(void)
                 p->main_thread = t;                                     ///< 切换到当前线程
                 copycontext(&p->context, &p->main_thread->context);     ///< 切换到线程的上下文
                 copytrapframe(p->trapframe, p->main_thread->trapframe); ///< 切换到线程的trapframe
+                if (p->context.ra < KERNEL_BASE)
+                {
+#ifdef RISCV
+                    printf("[diag][sched-in] pid=%d tid=%d user-range context.ra=%p context.sp=%p epc=%p\n",
+                           p->pid, p->main_thread->tid, p->context.ra, p->context.sp, p->trapframe->epc);
+#else
+                    printf("[diag][sched-in] pid=%d tid=%d user-range context.ra=%p context.sp=%p era=%p\n",
+                           p->pid, p->main_thread->tid, p->context.ra, p->context.sp, p->trapframe->era);
+#endif
+                }
                 p->main_thread->state = t_RUNNING;
                 p->main_thread->awakeTime = 0;
                 p->state = RUNNING;
@@ -435,8 +458,13 @@ void scheduler(void)
                 DEBUG_LOG_LEVEL(LOG_DEBUG, "era=%p, ra=%p, sp=%p, trapframe=%p\n", p->trapframe->era, p->context.ra, p->context.sp, p->trapframe);
 #endif
                 DEBUG_LOG_LEVEL(LOG_DEBUG, "pid=%d, tid=%d\n", p->pid, p->main_thread->tid);
-                list_remove(&t->elem);
-                list_push_back(&p->thread_queue, &t->elem);
+                if (p->state != ZOMBIE &&
+                    t->state != t_ZOMBIE &&
+                    t->state != t_UNUSED)
+                {
+                    list_remove(&t->elem);
+                    list_push_back(&p->thread_queue, &t->elem);
+                }
 
                 /* 返回这里时没有用户进程在CPU上执行 */
                 cpu->proc = NULL;
@@ -559,7 +587,15 @@ void reparent(proc_t *p)
     {
         if (child->parent == p)
         {
+            acquire(&child->lock);
+            if (child->state == ZOMBIE)
+            {
+                freeproc(child);
+                release(&child->lock);
+                continue;
+            }
             child->parent = initproc;
+            release(&child->lock);
             wakeup(initproc);
         }
     }
@@ -750,61 +786,26 @@ uint64 fork(void)
 
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
-
-    /* 复制父进程的共享内存段信息 — 共享内存本质上是跨进程的 */
-    for (i = 0; i < MAX_SHAREMEMORY_REGION_NUM; i++)
-        np->sharememory[i] = p->sharememory[i];
-    np->shm_num = p->shm_num;
-    np->shm_size = p->shm_size;
-
-    /* 修复 SHARE 类型的 VMA 映射：uvmcopy 将共享内存页私有化了。
-     * 这里将子进程的 SHARE 页重新映射到父进程的同一物理页，
-     * 使跨进程共享内存真正生效 (iozone 多进程同步依赖此行为)。 */
-    {
-        struct vma *svma = np->vma->next;
-        while (svma != np->vma)
-        {
-            if (svma->type == SHARE && svma->addr != svma->end)
-            {
-                for (uint64 va = svma->addr; va < svma->end; va += PGSIZE)
-                {
-                    pte_t *ppte = walk(p->pagetable, va, 0);
-                    if (ppte == NULL || (*ppte & PTE_V) == 0)
-                        continue;
-
-                    pte_t *cpte = walk(np->pagetable, va, 0);
-                    if (cpte == NULL || (*cpte & PTE_V) == 0)
-                        continue;
-
-                    uint64 parent_pa = PTE2PA(*ppte);
-                    uint64 flags = PTE_FLAGS(*ppte);
-                    uint64 child_old_pa = PTE2PA(*cpte);
-
-                    /* 子进程入口指向父进程的同一物理页 */
-                    *cpte = PA2PTE(parent_pa) | flags;
-
-                    /* 释放 uvmcopy 为子进程创建的私有副本。
-                     * child_old_pa 是物理地址, 需转为内核虚拟地址 (LoongArch 上 | dmwin_win0) */
-                    pmem_free_pages((void *)(child_old_pa | dmwin_win0), 1);
-                }
-            }
-            svma = svma->next;
-        }
-    }
+    np->pgid = p->pgid;
+    np->sid = p->sid;
+    np->uid = p->uid;
+    np->gid = p->gid;
+    np->umask = p->umask;
+    np->oom_score_adj = p->oom_score_adj;
 
     pid = np->pid;
     np->state = RUNNABLE;
     np->main_thread->state = t_RUNNABLE; ///< 设置主线程状态为可运行
 
     release(&np->lock); ///< 释放 allocproc中加的锁
-
+    
     // 在fork结束时再次诊断伙伴系统状态
     if (debug_buddy)
     {
         printf("=== Fork completed for pid %d, new pid %d ===\n", p->pid, np->pid);
         buddy_safe_check(); // 使用安全的检查函数
     }
-
+    
     DEBUG_LOG_LEVEL(LOG_DEBUG, "fork new proc pid is %d, tid is %d\n", np->pid, np->main_thread->tid);
     return pid;
 }
@@ -858,42 +859,12 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
 
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
-
-    /* 复制父进程的共享内存段信息 */
-    for (i = 0; i < MAX_SHAREMEMORY_REGION_NUM; i++)
-        np->sharememory[i] = p->sharememory[i];
-    np->shm_num = p->shm_num;
-    np->shm_size = p->shm_size;
-
-    /* 修复 SHARE 类型的 VMA 映射：使子进程共享父进程的物理页 */
-    {
-        struct vma *svma = np->vma->next;
-        while (svma != np->vma)
-        {
-            if (svma->type == SHARE && svma->addr != svma->end)
-            {
-                for (uint64 va = svma->addr; va < svma->end; va += PGSIZE)
-                {
-                    pte_t *ppte = walk(p->pagetable, va, 0);
-                    if (ppte == NULL || (*ppte & PTE_V) == 0)
-                        continue;
-
-                    pte_t *cpte = walk(np->pagetable, va, 0);
-                    if (cpte == NULL || (*cpte & PTE_V) == 0)
-                        continue;
-
-                    uint64 parent_pa = PTE2PA(*ppte);
-                    uint64 flags = PTE_FLAGS(*ppte);
-                    uint64 child_old_pa = PTE2PA(*cpte);
-
-                    *cpte = PA2PTE(parent_pa) | flags;
-                    pmem_free_pages((void *)(child_old_pa | dmwin_win0), 1);
-                }
-            }
-            svma = svma->next;
-        }
-    }
-
+    np->pgid = p->pgid;
+    np->sid = p->sid;
+    np->uid = p->uid;
+    np->gid = p->gid;
+    np->umask = p->umask;
+    np->oom_score_adj = p->oom_score_adj;
     args_t tmp;
     if (copyin(p->pagetable, (char *)(&tmp), stack,
                sizeof(args_t)) < 0)
@@ -965,12 +936,12 @@ int wait(int pid, uint64 addr)
                      * (np->exit_state << 8) | np->signal;
                      *
                      */
-                    uint16_t status = np->exit_state << 8;
+                    uint16_t status = np->term_signal ? np->term_signal : (np->exit_state << 8);
                     if (addr != 0 && copyout(p->pagetable, addr, (char *)&status, sizeof(status)) < 0) ///< 若用户指定了状态存储地址
                     {
                         release(&np->lock);
                         release(&p->lock);
-                        return -1;
+                        return -EFAULT;
                     }
                     freeproc(np);
                     release(&np->lock);
@@ -985,7 +956,7 @@ int wait(int pid, uint64 addr)
         if (!havekids || p->killed)
         {
             release(&p->lock);
-            return -1;
+            return !havekids ? -ECHILD : -EINTR;
         }
         /*子进程未退出，父进程进入睡眠等待*/
         sleep_on_chan(p, &p->lock);
@@ -1076,7 +1047,7 @@ int growproc(int n)
     }
     p->sz += n;
 
-    return 0;
+    return -ESRCH;
 }
 
 int killed(struct proc *p)
@@ -1175,16 +1146,77 @@ uint64 procnum(void)
     return num;
 }
 
+int proc_get_oom_score_adj(int pid, int *value)
+{
+    proc_t *p;
+
+    if (value == 0)
+        return -1;
+    for (p = pool; p < &pool[NPROC]; p++)
+    {
+        acquire(&p->lock);
+        if (p->state != UNUSED && p->pid == pid)
+        {
+            *value = p->oom_score_adj;
+            release(&p->lock);
+            return 0;
+        }
+        release(&p->lock);
+    }
+    return -1;
+}
+
+int proc_set_oom_score_adj(int pid, int value)
+{
+    proc_t *p;
+
+    for (p = pool; p < &pool[NPROC]; p++)
+    {
+        acquire(&p->lock);
+        if (p->state != UNUSED && p->pid == pid)
+        {
+            p->oom_score_adj = value;
+            release(&p->lock);
+            return 0;
+        }
+        release(&p->lock);
+    }
+    return -1;
+}
+
+static int signal_should_terminate(int signo)
+{
+    switch (signo)
+    {
+    case SIGKILL:
+    case SIGTERM:
+    case SIGABRT:
+    case SIGSEGV:
+    case SIGILL:
+    case SIGBUS:
+    case SIGFPE:
+    case SIGQUIT:
+    case SIGINT:
+    case SIGPIPE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 int kill(int pid, int sig)
 {
     proc_t *p;
+
     for (p = pool; p < &pool[NPROC]; p++)
     {
         acquire(&p->lock);
         if (p->pid == pid)
         {
-            p->sig_pending.__val[0] |= (1 << sig);
-            if (p->killed == 0 || p->killed > sig)
+            p->sig_pending.__val[0] |= (1UL << sig);
+            if (signal_should_terminate(sig) &&
+                p->sigaction[sig].__sigaction_handler.sa_handler == NULL &&
+                (p->killed == 0 || p->killed > sig))
             {
                 p->killed = sig;
             }
@@ -1203,6 +1235,7 @@ int kill(int pid, int sig)
 int tgkill(int tgid, int tid, int sig)
 {
     proc_t *p;
+
     for (p = pool; p < &pool[NPROC]; p++)
     {
         acquire(&p->lock);
@@ -1214,8 +1247,10 @@ int tgkill(int tgid, int tid, int sig)
                 t = list_entry(e, thread_t, elem);
                 if (t->tid == tid)
                 {
-                    p->sig_pending.__val[0] |= (1 << sig);
-                    if (p->killed == 0 || p->killed > sig)
+                    p->sig_pending.__val[0] |= (1UL << sig);
+                    if (signal_should_terminate(sig) &&
+                        p->sigaction[sig].__sigaction_handler.sa_handler == NULL &&
+                        (p->killed == 0 || p->killed > sig))
                     {
                         p->killed = sig;
                     }

@@ -3,6 +3,7 @@
 //
 #include "string.h"
 #include "types.h"
+#include "print.h"
 
 void *memset(void *dst, int c, uint n)
 {
@@ -36,6 +37,10 @@ void *memmove(void *dst, const void *src, uint n)
 
 	s = src;
 	d = dst;
+	if ((uint64)s >= 0xbffff000ULL && (uint64)s < 0xc0001000ULL) {
+		printf("[diag][memmove] suspicious src=%p dst=%p n=%u ra=%p\n",
+		       src, dst, n, __builtin_return_address(0));
+	}
 	if (s < d && s + n > d) {
 		s += n;
 		d += n;
