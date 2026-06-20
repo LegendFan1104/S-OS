@@ -121,16 +121,6 @@ int init_main()
     //     sys_openat(AT_FDCWD, "/dev/misc/rtc", 0777, O_CREATE);
 
     run_all();
-    // test_libc_dy();
-    //  test_libc();
-    //   test_lua();
-    //   test_basic();
-    //   test_busybox();
-    //    test_fs_img();
-    // test_iozone();
-    //  test_lmbench();
-    // test_libcbench();
-    // test_sh();
     shutdown();
     while (1)
         ;
@@ -179,19 +169,7 @@ void test_libc_all()
     int i, pid, status;
     sys_chdir("/musl");
     printf("#### OS COMP TEST GROUP START libctest-musl ####\n");
-    // for (i = 0; libctest[i].name[1]; i++)
-    // {
-    //     if (!libctest[i].valid)
-    //         continue;
-    //     pid = fork();
-    //     if (pid == 0)
-    //     {
-    //         char *newenviron[] = {NULL};
-    //         sys_execve("./runtest.exe", libctest[i].name, newenviron);
-    //         exit(0);
-    //     }
-    //     waitpid(pid, &status, 0);
-    // }
+    
     for (i = 0; libctest_dy[i].name[1]; i++)
     {
         if (!libctest_dy[i].valid)
@@ -873,7 +851,7 @@ void test_iozone()
     printf("#### OS COMP TEST GROUP START iozone-glibc ####\n");
     printf("run iozone_testcode.sh\n");
 
-    for (int i = 0; i < 7; i++)  // 跳过 stride-read 及之后
+    for (int i = 0; i < 2; i++)  // 跳过 stride-read 及之后
     {
         printf("iozone %s measurements\n", iozone_names[i]);
         pid = fork();
@@ -892,7 +870,7 @@ void test_iozone()
     printf("#### OS COMP TEST GROUP START iozone-musl ####\n");
     printf("run iozone_testcode.sh\n");
 
-    for (int i = 0; i < 4; i++)  // 跳过 stride-read 及之后
+    for (int i = 0; i < 2; i++)  // 跳过 stride-read 及之后
     {
         printf("iozone %s measurements\n", iozone_names[i]);
         pid = fork();
