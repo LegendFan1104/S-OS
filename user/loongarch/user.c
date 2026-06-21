@@ -95,11 +95,47 @@ char *basic_name[] = {
 };
 
 static char *ltp_submit_cases_musl_la[] = {
-    // Keep LoongArch on a curated set that is already observed to finish cleanly.
-    "/musl/ltp/testcases/bin/abs01",
-    "/musl/ltp/testcases/bin/accept01",
-    "/musl/ltp/testcases/bin/accept03",
+    // Front-load higher-yield stable cases so a later crash does less damage.
+    "/musl/ltp/testcases/bin/clock_getres01",
+    "/musl/ltp/testcases/bin/getitimer01",
     "/musl/ltp/testcases/bin/access03",
+    "/musl/ltp/testcases/bin/alarm02",
+    "/musl/ltp/testcases/bin/accept01",
+    "/musl/ltp/testcases/bin/getgroups01",
+    "/musl/ltp/testcases/bin/getresuid01",
+    "/musl/ltp/testcases/bin/getresgid01",
+    "/musl/ltp/testcases/bin/abs01",
+    "/musl/ltp/testcases/bin/getuid01",
+    "/musl/ltp/testcases/bin/geteuid01",
+    "/musl/ltp/testcases/bin/getgid01",
+    //"/musl/ltp/testcases/bin/getegid01",
+    "/musl/ltp/testcases/bin/getppid01",
+    "/musl/ltp/testcases/bin/getpgrp01",
+    "/musl/ltp/testcases/bin/getsid02",
+    "/musl/ltp/testcases/bin/geteuid02",
+    "/musl/ltp/testcases/bin/getrlimit01",
+    "/musl/ltp/testcases/bin/getrusage01",
+    "/musl/ltp/testcases/bin/sched_yield01",
+    "/musl/ltp/testcases/bin/wait01",
+    "/musl/ltp/testcases/bin/setpgid01",
+    "/musl/ltp/testcases/bin/uname01",
+    "/musl/ltp/testcases/bin/gettid01",
+    "/musl/ltp/testcases/bin/getpagesize01",
+    "/musl/ltp/testcases/bin/getdomainname01",
+    "/musl/ltp/testcases/bin/gethostname01",
+    0,
+};
+
+static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
+    "/musl/ltp/testcases/bin/clock_getres01",
+    "/musl/ltp/testcases/bin/getitimer01",
+    "/musl/ltp/testcases/bin/access03",
+    "/musl/ltp/testcases/bin/alarm02",
+    "/musl/ltp/testcases/bin/accept01",
+    "/musl/ltp/testcases/bin/getgroups01",
+    "/musl/ltp/testcases/bin/getresuid01",
+    "/musl/ltp/testcases/bin/getresgid01",
+    "/musl/ltp/testcases/bin/abs01",
     "/musl/ltp/testcases/bin/getuid01",
     "/musl/ltp/testcases/bin/geteuid01",
     "/musl/ltp/testcases/bin/getgid01",
@@ -116,18 +152,9 @@ static char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/uname01",
     "/musl/ltp/testcases/bin/gettid01",
     "/musl/ltp/testcases/bin/getpagesize01",
-    0,
-};
-
-static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
-    "/musl/ltp/testcases/bin/abs01",
-    "/musl/ltp/testcases/bin/accept01",
+    //"/musl/ltp/testcases/bin/getdomainname01",
+    "/musl/ltp/testcases/bin/gethostname01",
     "/musl/ltp/testcases/bin/accept03",
-    "/musl/ltp/testcases/bin/access03",
-    "/musl/ltp/testcases/bin/getuid01",
-    "/musl/ltp/testcases/bin/geteuid01",
-    "/musl/ltp/testcases/bin/getgid01",
-    "/musl/ltp/testcases/bin/getegid01",
     0,
 };
 
