@@ -91,7 +91,7 @@ static struct disk
 
     struct virtio_blk_req ops[NUM];
 
-    // struct spinlock vdisk_lock;
+    struct spinlock vdisk_lock;
 
 } __attribute__((aligned(PGSIZE))) disk;
 
@@ -366,7 +366,7 @@ void la_virtio_disk_init(void)
     }
 
     /*先不考虑锁*/
-    // initlock(&disk.vdisk_lock, "virtio disk lock");
+    initlock(&disk.vdisk_lock, "virtio disk lock");
     virtio_pci_set_queue_size(&gs_virtio_blk_hw, 0, NUM);
     memset(disk.pages, 0, sizeof(disk.pages));
     disk.desc = (struct VRingDesc *)disk.pages;
@@ -484,7 +484,10 @@ void la_virtio_disk_rw(struct buf *b, int write)
     // w_csr_tcfg(0);//< 关闭时钟中断
     uint64 sector = b->blockno * (BSIZE / 512);
 
-    // acquire(&disk.vdisk_lock);
+    // The LoongArch path polls the used ring directly, so request metadata
+    // must not be interleaved by timer-driven reentry while a request is in
+    // flight.
+    acquire(&disk.vdisk_lock);
 
     // the spec says that legacy block operations use three
     // descriptors: one for type/reserved/sector, one for
@@ -504,19 +507,16 @@ void la_virtio_disk_rw(struct buf *b, int write)
     // format the three descriptors.
     // qemu's virtio-blk.c reads them.
 
+    struct virtio_blk_req *buf0 = &disk.ops[idx[0]];
     if (write)
-        buf0.type = VIRTIO_BLK_T_OUT; // write the disk
+        buf0->type = VIRTIO_BLK_T_OUT; // write the disk
     else
-        buf0.type = VIRTIO_BLK_T_IN; // read the disk
-    buf0.reserved = 0;
-    buf0.sector = sector;
+        buf0->type = VIRTIO_BLK_T_IN; // read the disk
+    buf0->reserved = 0;
+    buf0->sector = sector;
 
-    // buf0 is on a kernel stack, which is not direct mapped,
-    // thus the call to kvmpa().
-    disk.desc[idx[0]].addr = PA2VA((uint64)&buf0);
-
-    // disk.desc[idx[0]].addr = (uint64) &buf0;
-    disk.desc[idx[0]].len = sizeof(buf0);
+    disk.desc[idx[0]].addr = PA2VA((uint64)buf0);
+    disk.desc[idx[0]].len = sizeof(*buf0);
     disk.desc[idx[0]].flags = VRING_DESC_F_NEXT;
     disk.desc[idx[0]].next = idx[1];
 
@@ -549,21 +549,10 @@ void la_virtio_disk_rw(struct buf *b, int write)
     disk.avail[1] = disk.avail[1] + 1;
     virtio_pci_set_queue_notify(&gs_virtio_blk_hw, 0);
 
-    // Wait for virtio_disk_intr() to say request has finished.
-    // printf("Before\n");
-    // while(b->disk == 1) {
-    //   sleep(b, &disk.vdisk_lock);
-    // }
-    volatile uint16 *pt_used_idx = &disk.used_idx;
-    volatile uint16 *pt_idx = &disk.used->id;
-    //     wait cmd done
-    while (*pt_used_idx == *pt_idx)
+    while (disk.used_idx == disk.used->id)
     {
     }
-while(disk.info[idx[0]].status!=0)
-{
-}
-    int id = disk.used->elems[disk.used_idx].id;
+    int id = disk.used->elems[disk.used_idx % NUM].id;
 
     /*
      *下面代码块用于显示读写磁盘信息
@@ -572,8 +561,15 @@ while(disk.info[idx[0]].status!=0)
     回应上面：之前认为是延时问题，但事实上是忙等待条件没设好，用while(disk.info[idx[0]].status!=0)就没问题了
         --2025.5.18 00:02
      */
-    struct buf *bprint = disk.info[id].b;
-    bprint->disk = 0; // disk is done with buf
+    if (id != idx[0])
+        panic("virtio used mismatch");
+    if (disk.info[id].status != 0)
+        panic("virtio_disk_intr status");
+    if (disk.info[id].b == 0)
+        panic("virtio missing buf");
+
+    disk.info[id].b->disk = 0;
+    disk.info[id].b = 0;
     //   if(write) printf("\n写请求!");
     // else printf("\n读请求!");
     //   printf("与磁盘交换的内容:\n");
@@ -586,32 +582,9 @@ while(disk.info[idx[0]].status!=0)
     // printf("准备发送请求到磁盘. %x, %x\n",disk.used_idx,&disk.used->id); //< 最初调试语句
 
 
-    if (disk.info[id].status != 0)
-        panic("virtio_disk_intr status");
-
-    // wakeup(disk.info[id].b);
-
-    disk.used_idx = (disk.used_idx + 1) % NUM;
-    while ((disk.used_idx % NUM) != (disk.used->id % NUM))
-    {
-        int id = disk.used->elems[disk.used_idx].id;
-
-        if (disk.info[id].status != 0)
-            panic("virtio_disk_intr status");
-
-        // wakeup(disk.info[id].b);
-
-        disk.used_idx = (disk.used_idx + 1) % NUM;
-    }
-    b->disk = 0;
-
-    disk.info[idx[0]].b = 0;
-    free_chain(idx[0]);
-
-    // release(&disk.vdisk_lock);
-    // printf("[la_virtio_disk_rw] done\n\n");
-    // intr_on();
-    //countdown_timer_init();
+    disk.used_idx += 1;
+    free_chain(id);
+    release(&disk.vdisk_lock);
 }
 
 #endif
