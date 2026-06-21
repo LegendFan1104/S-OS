@@ -951,7 +951,7 @@ int sys_clone3()
 
 int sys_wait(int pid, uint64 va, int option)
 {
-    return wait(pid, va);
+    return wait(pid, va, option);
 }
 
 uint64 sys_exit(int n)
@@ -975,7 +975,7 @@ uint64 sys_kill(int pid, int sig)
     if (pid == 0)
         return kill(myproc()->pid, sig);
     if (pid == -1)
-        return 0;
+        return kill_all(sig, myproc());
     return -ESRCH;
 }
 
@@ -1236,13 +1236,18 @@ int sys_uname(uint64 buf)
 uint64 sys_sched_setaffinity(int pid, uint64 cpusetsize, uint64 mask_addr)
 {
     uint64 mask = 0;
+    proc_t *target = NULL;
 
     if (cpusetsize < sizeof(mask))
         return -EINVAL;
-    if (pid < 0 || pid > NPROC)
+    if (pid < 0)
         return -ESRCH;
-    if (pid != 0 && getproc(pid)->state == UNUSED)
-        return -ESRCH;
+    if (pid != 0)
+    {
+        target = getproc(pid);
+        if (target == NULL)
+            return -ESRCH;
+    }
     if (copyin(myproc()->pagetable, (char *)&mask, mask_addr, sizeof(mask)) < 0)
         return -EFAULT;
     if ((mask & 1) == 0)
@@ -1254,13 +1259,18 @@ uint64 sys_sched_setaffinity(int pid, uint64 cpusetsize, uint64 mask_addr)
 uint64 sys_sched_getaffinity(int pid, uint64 cpusetsize, uint64 mask_addr)
 {
     uint64 mask = 1;
+    proc_t *target = NULL;
 
     if (cpusetsize < sizeof(mask))
         return -EINVAL;
-    if (pid < 0 || pid > NPROC)
+    if (pid < 0)
         return -ESRCH;
-    if (pid != 0 && getproc(pid)->state == UNUSED)
-        return -ESRCH;
+    if (pid != 0)
+    {
+        target = getproc(pid);
+        if (target == NULL)
+            return -ESRCH;
+    }
     if (copyout(myproc()->pagetable, mask_addr, (char *)&mask, sizeof(mask)) < 0)
         return -EFAULT;
 
