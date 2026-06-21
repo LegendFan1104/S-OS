@@ -16,6 +16,9 @@ typedef long unsigned int size_t;
 
 #define NULL ((void *)0)
 #define stdout 1
+#define WNOHANG 1
+#define ECHILD 10
+#define SIGKILL 9
 
 typedef struct timeval {
     uint64 sec;      // 秒
