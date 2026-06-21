@@ -562,7 +562,7 @@ void run_submit()
     test_busybox();
     test_libc_all();
     test_libcbench();
-    //cleanup_ltp_round("pre-ltp");
+    cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
     run_ltp_curated_profile("ltp-glibc", ltp_submit_cases_glibc_la, ltp_submit_env_glibc);
