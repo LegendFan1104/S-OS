@@ -466,7 +466,7 @@ void run_submit()
     //test_sh();
     test_libc_all();
     test_libcbench();
-    //cleanup_ltp_round("pre-ltp");
+    cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
     run_ltp_curated_profile("ltp-musl", ltp_submit_cases_musl_rv, ltp_submit_env_musl);
