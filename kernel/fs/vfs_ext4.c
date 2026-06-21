@@ -1,6 +1,7 @@
 #include "types.h"
 #include "defs.h"
 #include "timer.h"
+#include "sleeplock.h"
 #ifdef RISCV
 #include "riscv.h"
 #else
@@ -31,6 +32,68 @@
 #include "vmem.h"
 #include "cpu.h"
 
+static struct sleeplock vfs_ext4_lock;
+static struct spinlock vfs_ext4_lock_state;
+static int vfs_ext4_lock_ready;
+static int vfs_ext4_lock_owner_tid = -1;
+static int vfs_ext4_lock_depth;
+
+static int vfs_ext4_current_lock_tid(void)
+{
+    struct proc *p = myproc();
+
+    if (p && p->main_thread)
+        return p->main_thread->tid;
+    return -1;
+}
+
+static void vfs_ext4_os_lock(void)
+{
+    int tid = vfs_ext4_current_lock_tid();
+
+    acquire(&vfs_ext4_lock_state);
+    if (vfs_ext4_lock_depth > 0 && vfs_ext4_lock_owner_tid == tid)
+    {
+        vfs_ext4_lock_depth++;
+        release(&vfs_ext4_lock_state);
+        return;
+    }
+    release(&vfs_ext4_lock_state);
+
+    acquiresleep(&vfs_ext4_lock);
+
+    acquire(&vfs_ext4_lock_state);
+    vfs_ext4_lock_owner_tid = tid;
+    vfs_ext4_lock_depth = 1;
+    release(&vfs_ext4_lock_state);
+}
+
+static void vfs_ext4_os_unlock(void)
+{
+    int tid = vfs_ext4_current_lock_tid();
+
+    acquire(&vfs_ext4_lock_state);
+    if (vfs_ext4_lock_depth < 1 || vfs_ext4_lock_owner_tid != tid)
+        panic("ext4 mount unlock");
+
+    vfs_ext4_lock_depth--;
+    if (vfs_ext4_lock_depth > 0)
+    {
+        release(&vfs_ext4_lock_state);
+        return;
+    }
+
+    vfs_ext4_lock_owner_tid = -1;
+    release(&vfs_ext4_lock_state);
+
+    releasesleep(&vfs_ext4_lock);
+}
+
+static const struct ext4_lock vfs_ext4_locks = {
+    .lock = vfs_ext4_os_lock,
+    .unlock = vfs_ext4_os_unlock,
+};
+
 static void vfs_ext4_mp_lock(struct ext4_mountpoint *mp)
 {
     if (mp && mp->os_locks && mp->os_locks->lock)
@@ -56,6 +119,13 @@ vfs_ext4_now_sec(void)
  */
 int vfs_ext4_init(void) 
 {
+    if (!vfs_ext4_lock_ready)
+    {
+        initsleeplock(&vfs_ext4_lock, "ext4 mount");
+        initlock(&vfs_ext4_lock_state, "ext4 mount state");
+        vfs_ext4_lock_ready = 1;
+    }
+
     ext4_device_unregister_all();
     ext4_init_mountpoints();
     return 0;
@@ -89,6 +159,14 @@ vfs_ext4_mount(struct filesystem *fs, uint64_t rwflag, const void *data)
         vfs_ext4_blockdev_destroy(vbdev);
     else
     {
+        status = ext4_mount_setup_locks(fs->path, &vfs_ext4_locks);
+        if (status != EOK)
+        {
+            ext4_umount(fs->path);
+            vfs_ext4_blockdev_destroy(vbdev);
+            return status;
+        }
+
         fs->fs_data = vbdev;
         fs->rwflag = rwflag;
     }   

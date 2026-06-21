@@ -62,3 +62,7 @@ workspace-from-container*/
 workspace-src-export/
 base-rv.img
 base-la.img
+.agents/
+.codex/
+include/kernel/la_init_code.h
+include/kernel/rv_init_code.h
