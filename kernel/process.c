@@ -82,7 +82,14 @@ int allocpid(void)
 
 struct proc *getproc(int pid)
 {
-    return &pool[pid - 1];
+    struct proc *p;
+
+    for (p = pool; p < &pool[NPROC]; p++)
+    {
+        if (p->state != UNUSED && p->pid == pid)
+            return p;
+    }
+    return NULL;
 }
 
 static void
@@ -910,7 +917,7 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
  * @param addr 用户空间地址，用于存储子进程的退出状态（若不为0）
  * @return int 成功返回子进程PID，失败返回-1
  */
-int wait(int pid, uint64 addr)
+int wait(int pid, uint64 addr, int options)
 {
     struct proc *np;
     int havekids;
@@ -951,6 +958,11 @@ int wait(int pid, uint64 addr)
                 }
                 release(&np->lock);
             }
+        }
+        if (options & 1)
+        {
+            release(&p->lock);
+            return havekids ? 0 : -ECHILD;
         }
         /*若没有子进程 或 当前进程已被杀死*/
         if (!havekids || p->killed)
@@ -1230,6 +1242,33 @@ int kill(int pid, int sig)
         release(&p->lock);
     }
     return 0;
+}
+
+int kill_all(int sig, proc_t *exclude)
+{
+    proc_t *p;
+    int matched = 0;
+
+    for (p = pool; p < &pool[NPROC]; p++)
+    {
+        acquire(&p->lock);
+        if (p->state != UNUSED && p != exclude && p != initproc)
+        {
+            p->sig_pending.__val[0] |= (1UL << sig);
+            if (signal_should_terminate(sig) &&
+                p->sigaction[sig].__sigaction_handler.sa_handler == NULL &&
+                (p->killed == 0 || p->killed > sig))
+            {
+                p->killed = sig;
+            }
+            if (p->state == SLEEPING)
+                p->state = RUNNABLE;
+            matched = 1;
+        }
+        release(&p->lock);
+    }
+
+    return matched ? 0 : -ESRCH;
 }
 
 int tgkill(int tgid, int tid, int sig)

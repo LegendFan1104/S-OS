@@ -14,7 +14,7 @@
 #include "list.h"
 #include "resource.h"
 
-#define NPROC (64)
+#define NPROC (128)
 
 /* Cloning flags.  */
 #define CSIGNAL 0x000000ff
@@ -126,7 +126,7 @@ void wakeup(void *);
 void yield(void);
 uint64 fork(void);
 int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid);
-int wait(int pid, uint64 addr);
+int wait(int pid, uint64 addr, int options);
 void exit(int exit_state);
 void proc_yield(void);
 void reg_info(void);
@@ -140,6 +140,7 @@ uint64 procnum(void);
 int proc_get_oom_score_adj(int pid, int *value);
 int proc_set_oom_score_adj(int pid, int value);
 int kill(int pid, int sig);
+int kill_all(int sig, proc_t *exclude);
 int tgkill(int tgid, int tid, int sig);
 void sched(void);
 uint64 clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags);

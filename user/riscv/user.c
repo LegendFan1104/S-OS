@@ -61,6 +61,8 @@ void run_probe();
 void run_selected_profile();
 void run_ltp_profile(const char *root_dir, const char *profile_name);
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[]);
+void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir);
+void cleanup_ltp_round(const char *profile_name);
 void exe(char *path);
 static char *busybox_cmd[];
 char *question_name[] = {};
@@ -134,76 +136,39 @@ static char *ltp_submit_cases_musl_rv[] = {
     // 0,
 
     "/musl/ltp/testcases/bin/signal03",
-"/musl/ltp/testcases/bin/signal04",
-"/musl/ltp/testcases/bin/llseek03",
-"/musl/ltp/testcases/bin/pathconf01",
-"/musl/ltp/testcases/bin/getrlimit01",
-"/musl/ltp/testcases/bin/epoll_ctl03",
-"/musl/ltp/testcases/bin/getpid01",
-"/musl/ltp/testcases/bin/abort01",
-"/musl/ltp/testcases/bin/accept01",
-"/musl/ltp/testcases/bin/access01",
-"/musl/ltp/testcases/bin/access04",
-"/musl/ltp/testcases/bin/alarm02",
-"/musl/ltp/testcases/bin/alarm03",
-"/musl/ltp/testcases/bin/chmod01",
-"/musl/ltp/testcases/bin/chown01",
-"/musl/ltp/testcases/bin/chown05",
-"/musl/ltp/testcases/bin/clock_getres01",
-"/musl/ltp/testcases/bin/clone08",
-"/musl/ltp/testcases/bin/close01",
-"/musl/ltp/testcases/bin/confstr01",
-"/musl/ltp/testcases/bin/creat03",
-"/musl/ltp/testcases/bin/dup01",
-"/musl/ltp/testcases/bin/dup03",
-"/musl/ltp/testcases/bin/dup04",
-"/musl/ltp/testcases/bin/dup06",
-"/musl/ltp/testcases/bin/dup202",
-"/musl/ltp/testcases/bin/dup203",
-"/musl/ltp/testcases/bin/dup204",
-"/musl/ltp/testcases/bin/dup205",
-"/musl/ltp/testcases/bin/dup206",
-"/musl/ltp/testcases/bin/dup207",
-"/musl/ltp/testcases/bin/dup3_01",
-"/musl/ltp/testcases/bin/abs01",
-"/musl/ltp/testcases/bin/accept03",
-"/musl/ltp/testcases/bin/getuid01",
-"/musl/ltp/testcases/bin/geteuid01",
-"/musl/ltp/testcases/bin/getgid01",
-"/musl/ltp/testcases/bin/getegid01",
-"/musl/ltp/testcases/bin/getppid01",
-"/musl/ltp/testcases/bin/getpgrp01",
-"/musl/ltp/testcases/bin/getsid02",
-"/musl/ltp/testcases/bin/geteuid02",
-"/musl/ltp/testcases/bin/getuid03",
-"/musl/ltp/testcases/bin/getrusage01",
-"/musl/ltp/testcases/bin/sched_yield01",
-"/musl/ltp/testcases/bin/wait01",
-"/musl/ltp/testcases/bin/setpgid01",
-"/musl/ltp/testcases/bin/uname01",
-"/musl/ltp/testcases/bin/gettid01",
-"/musl/ltp/testcases/bin/getpagesize01",
-"/musl/ltp/testcases/bin/getdomainname01",
-"/musl/ltp/testcases/bin/gethostname01",
-"/musl/ltp/testcases/bin/getgroups01",
-"/musl/ltp/testcases/bin/getresuid01",
-"/musl/ltp/testcases/bin/getresgid01",
-"/musl/ltp/testcases/bin/getitimer01",
-0,
-};
-
-static char *ltp_submit_cases_glibc_rv[] = {
-    // Front-load high-yield cases and keep accept03 out of the hot path,
-    // because the RV glibc score group has been crashing immediately after it.
-    "/musl/ltp/testcases/bin/clock_getres01",
-    "/musl/ltp/testcases/bin/getitimer01",
-    //"/musl/ltp/testcases/bin/access03",
-    "/musl/ltp/testcases/bin/alarm02",
+    "/musl/ltp/testcases/bin/signal04",
+    "/musl/ltp/testcases/bin/llseek03",
+    "/musl/ltp/testcases/bin/pathconf01",
+    "/musl/ltp/testcases/bin/getrlimit01",
+    "/musl/ltp/testcases/bin/epoll_ctl03",
+    "/musl/ltp/testcases/bin/getpid01",
+    "/musl/ltp/testcases/bin/abort01",
     "/musl/ltp/testcases/bin/accept01",
-    "/musl/ltp/testcases/bin/getgroups01",
-    "/musl/ltp/testcases/bin/getresuid01",
-    "/musl/ltp/testcases/bin/getresgid01",
+    "/musl/ltp/testcases/bin/access01",
+    "/musl/ltp/testcases/bin/access04",
+    "/musl/ltp/testcases/bin/alarm02",
+    "/musl/ltp/testcases/bin/alarm03",
+    "/musl/ltp/testcases/bin/chmod01",
+    "/musl/ltp/testcases/bin/chown01",
+    "/musl/ltp/testcases/bin/chown05",
+    "/musl/ltp/testcases/bin/clock_getres01",
+    "/musl/ltp/testcases/bin/clone08",
+    "/musl/ltp/testcases/bin/close01",
+    "/musl/ltp/testcases/bin/confstr01",
+    "/musl/ltp/testcases/bin/creat03",
+    "/musl/ltp/testcases/bin/dup01",
+    "/musl/ltp/testcases/bin/dup03",
+    "/musl/ltp/testcases/bin/dup04",
+    "/musl/ltp/testcases/bin/dup06",
+    "/musl/ltp/testcases/bin/dup202",
+    "/musl/ltp/testcases/bin/dup203",
+    "/musl/ltp/testcases/bin/dup204",
+    "/musl/ltp/testcases/bin/dup205",
+    "/musl/ltp/testcases/bin/dup206",
+    "/musl/ltp/testcases/bin/dup207",
+    "/musl/ltp/testcases/bin/dup3_01",
     "/musl/ltp/testcases/bin/abs01",
+    "/musl/ltp/testcases/bin/accept03",
     "/musl/ltp/testcases/bin/getuid01",
     "/musl/ltp/testcases/bin/geteuid01",
     "/musl/ltp/testcases/bin/getgid01",
@@ -212,7 +177,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/getpgrp01",
     "/musl/ltp/testcases/bin/getsid02",
     "/musl/ltp/testcases/bin/geteuid02",
-    "/musl/ltp/testcases/bin/getrlimit01",
+    "/musl/ltp/testcases/bin/getuid03",
     "/musl/ltp/testcases/bin/getrusage01",
     "/musl/ltp/testcases/bin/sched_yield01",
     "/musl/ltp/testcases/bin/wait01",
@@ -222,6 +187,100 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/getpagesize01",
     "/musl/ltp/testcases/bin/getdomainname01",
     "/musl/ltp/testcases/bin/gethostname01",
+    "/musl/ltp/testcases/bin/getgroups01",
+    "/musl/ltp/testcases/bin/getresuid01",
+    "/musl/ltp/testcases/bin/getresgid01",
+    "/musl/ltp/testcases/bin/getitimer01",
+    0,
+};
+
+static char *ltp_submit_cases_glibc_rv[] = {
+    // Front-load high-yield cases and keep accept03 out of the hot path,
+    // because the RV glibc score group has been crashing immediately after it.
+    // "/musl/ltp/testcases/bin/clock_getres01",
+    // "/musl/ltp/testcases/bin/getitimer01",
+    // //"/musl/ltp/testcases/bin/access03",
+    // "/musl/ltp/testcases/bin/alarm02",
+    // "/musl/ltp/testcases/bin/accept01",
+    // "/musl/ltp/testcases/bin/getgroups01",
+    // "/musl/ltp/testcases/bin/getresuid01",
+    // "/musl/ltp/testcases/bin/getresgid01",
+    // "/musl/ltp/testcases/bin/abs01",
+    // "/musl/ltp/testcases/bin/getuid01",
+    // "/musl/ltp/testcases/bin/geteuid01",
+    // "/musl/ltp/testcases/bin/getgid01",
+    // "/musl/ltp/testcases/bin/getegid01",
+    // "/musl/ltp/testcases/bin/getppid01",
+    // "/musl/ltp/testcases/bin/getpgrp01",
+    // "/musl/ltp/testcases/bin/getsid02",
+    // "/musl/ltp/testcases/bin/geteuid02",
+    // "/musl/ltp/testcases/bin/getrlimit01",
+    // "/musl/ltp/testcases/bin/getrusage01",
+    // "/musl/ltp/testcases/bin/sched_yield01",
+    // "/musl/ltp/testcases/bin/wait01",
+    // "/musl/ltp/testcases/bin/setpgid01",
+    // "/musl/ltp/testcases/bin/uname01",
+    // "/musl/ltp/testcases/bin/gettid01",
+    // "/musl/ltp/testcases/bin/getpagesize01",
+    // "/musl/ltp/testcases/bin/getdomainname01",
+    // "/musl/ltp/testcases/bin/gethostname01",
+    // 0,
+    "/musl/ltp/testcases/bin/signal03",
+    "/musl/ltp/testcases/bin/signal04",
+    "/musl/ltp/testcases/bin/llseek03",
+    "/musl/ltp/testcases/bin/pathconf01",
+    "/musl/ltp/testcases/bin/access01",
+    "/musl/ltp/testcases/bin/getrlimit01",//从这开始卡死
+    "/musl/ltp/testcases/bin/epoll_ctl03",
+    "/musl/ltp/testcases/bin/getpid01",
+    "/musl/ltp/testcases/bin/abort01",
+    "/musl/ltp/testcases/bin/accept01",
+    "/musl/ltp/testcases/bin/access04",
+    "/musl/ltp/testcases/bin/alarm02",
+    "/musl/ltp/testcases/bin/alarm03",
+    "/musl/ltp/testcases/bin/chmod01",
+    "/musl/ltp/testcases/bin/chown01",
+    "/musl/ltp/testcases/bin/chown05",
+    "/musl/ltp/testcases/bin/clock_getres01",
+    "/musl/ltp/testcases/bin/clone08",
+    "/musl/ltp/testcases/bin/close01",
+    "/musl/ltp/testcases/bin/confstr01",
+    "/musl/ltp/testcases/bin/creat03",
+    "/musl/ltp/testcases/bin/dup01",
+    "/musl/ltp/testcases/bin/dup03",
+    "/musl/ltp/testcases/bin/dup04",
+    "/musl/ltp/testcases/bin/dup06",
+    "/musl/ltp/testcases/bin/dup202",
+    "/musl/ltp/testcases/bin/dup203",
+    "/musl/ltp/testcases/bin/dup204",
+    "/musl/ltp/testcases/bin/dup205",
+    "/musl/ltp/testcases/bin/dup206",
+    "/musl/ltp/testcases/bin/dup207",
+    "/musl/ltp/testcases/bin/dup3_01",
+    "/musl/ltp/testcases/bin/abs01",
+    "/musl/ltp/testcases/bin/accept03",
+    "/musl/ltp/testcases/bin/getuid01",
+    "/musl/ltp/testcases/bin/geteuid01",
+    "/musl/ltp/testcases/bin/getgid01",
+    "/musl/ltp/testcases/bin/getegid01",
+    "/musl/ltp/testcases/bin/getppid01",
+    "/musl/ltp/testcases/bin/getpgrp01",
+    "/musl/ltp/testcases/bin/getsid02",
+    "/musl/ltp/testcases/bin/geteuid02",
+    "/musl/ltp/testcases/bin/getuid03",
+    "/musl/ltp/testcases/bin/getrusage01",
+    "/musl/ltp/testcases/bin/sched_yield01",
+    "/musl/ltp/testcases/bin/wait01",
+    "/musl/ltp/testcases/bin/setpgid01",
+    "/musl/ltp/testcases/bin/uname01",
+    "/musl/ltp/testcases/bin/gettid01",
+    "/musl/ltp/testcases/bin/getpagesize01",
+    "/musl/ltp/testcases/bin/getdomainname01",
+    "/musl/ltp/testcases/bin/gethostname01",
+    "/musl/ltp/testcases/bin/getgroups01",
+    "/musl/ltp/testcases/bin/getresuid01",
+    "/musl/ltp/testcases/bin/getresgid01",
+    "/musl/ltp/testcases/bin/getitimer01",
     0,
 };
 
@@ -241,7 +300,7 @@ static char *ltp_probe_cases_musl_rv[] = {
 static char *ltp_submit_env_musl[] = {
     "LTPBASE=/musl",
     "LTPROOT=/musl/ltp",
-    "TMPDIR=/tmp",
+    "TMPDIR=/tmp/ltp-musl",
     "PATH=/musl:/musl/ltp/testcases/bin:/musl/ltp/testcases/lib:/bin:/usr/bin",
     0,
 };
@@ -251,7 +310,7 @@ static char *ltp_submit_env_glibc[] = {
     // the glibc-specific runtime traps are fixed.
     "LTPBASE=/musl",
     "LTPROOT=/musl/ltp",
-    "TMPDIR=/tmp",
+    "TMPDIR=/tmp/ltp-glibc",
     "PATH=/musl:/musl/ltp/testcases/bin:/musl/ltp/testcases/lib:/bin:/usr/bin",
     0,
 };
@@ -311,6 +370,79 @@ static char *ltp_case_name(char *path)
     return name;
 }
 
+static int run_busybox_argv(char *argv[])
+{
+    int pid, status;
+
+    pid = fork();
+    if (pid < 0)
+    {
+        printf("init: fork failed\n");
+        return -1;
+    }
+    if (pid == 0)
+    {
+        char *newenviron[] = {NULL};
+        sys_execve("/musl/busybox", argv, newenviron);
+        print("execve error.\n");
+        exit(1);
+    }
+    waitpid(pid, &status, 0);
+    return WEXITSTATUS(status);
+}
+
+void cleanup_ltp_round(const char *profile_name)
+{
+    int idle_rounds = 0;
+    int status;
+    int ret;
+
+    sys_kill(-1, SIGKILL);
+    while (idle_rounds < 8)
+    {
+        int reaped = 0;
+
+        sys_sched_yield();
+        while ((ret = waitpid(-1, &status, WNOHANG)) > 0)
+            reaped++;
+        if (reaped == 0)
+            idle_rounds++;
+        else
+            idle_rounds = 0;
+        if (ret == -ECHILD)
+            break;
+    }
+    printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
+}
+
+void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
+{
+    char *rm_argv[] = {
+        "/musl/busybox",
+        "rm",
+        "-rf",
+        (char *)tmpdir,
+        0};
+    char *mkdir_argv[] = {
+        "/musl/busybox",
+        "mkdir",
+        "-p",
+        (char *)tmpdir,
+        0};
+    int ret;
+
+    ret = run_busybox_argv(rm_argv);
+    if (ret != 0)
+        printf("WARN LTP TMPDIR CLEANUP %s : %d\n", profile_name, ret);
+
+    ret = run_busybox_argv(mkdir_argv);
+    if (ret != 0)
+    {
+        printf("FAIL LTP TMPDIR PREP %s : %d\n", profile_name, ret);
+        exit(1);
+    }
+}
+
 void run_selected_profile()
 {
 #if defined(TEST_PROFILE_LTP_MUSL)
@@ -331,18 +463,24 @@ void run_submit()
     test_basic();
     test_busybox();
     test_lua();
-    ////test_sh();
+    //test_sh();
     test_libc_all();
     test_libcbench();
+    //cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
+    prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
     run_ltp_curated_profile("ltp-musl", ltp_submit_cases_musl_rv, ltp_submit_env_musl);
+    cleanup_ltp_round("ltp-musl");
     sys_chdir("/musl");
+    prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
     run_ltp_curated_profile("ltp-glibc", ltp_submit_cases_glibc_rv, ltp_submit_env_glibc);
+    cleanup_ltp_round("ltp-glibc");
 }
 
 void run_probe()
 {
     sys_chdir("/musl");
+    prepare_ltp_tmpdir("ltp-probe-rv", "/tmp/ltp-musl");
     run_ltp_curated_profile("ltp-probe-rv", ltp_probe_cases_musl_rv, ltp_submit_env_musl);
 }
 
@@ -380,7 +518,7 @@ void run_ltp_profile(const char *root_dir, const char *profile_name)
             "echo RUN LTP CASE \"$base\"; "
             "case \"$base\" in ask_password.sh|assign_password.sh) echo SKIP LTP CASE \"$base\" : interactive; continue ;; esac; "
             "if [ \"$LTP_HAS_TIMEOUT\" -eq 1 ]; then "
-            "\"$BUSYBOX\" timeout -s KILL 35 \"$file\"; "
+            "\"$BUSYBOX\" timeout -s 9 35 \"$file\"; "
             "else "
             "\"$file\"; "
             "fi; "
@@ -417,7 +555,7 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
                 "/musl/busybox",
                 "timeout",
                 "-s",
-                "KILL",
+                "9",
                 "25",
                 cases[i],
                 0};
