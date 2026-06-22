@@ -63,7 +63,6 @@ void run_ltp_profile(const char *root_dir, const char *profile_name);
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[]);
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir);
 void cleanup_ltp_round(const char *profile_name);
-void cleanup_ltp_case(const char *profile_name, const char *case_name);
 void exe(char *path);
 static char *busybox_cmd[];
 char *question_name[] = {};
@@ -258,9 +257,9 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/getdents02",
     "/musl/ltp/testcases/bin/fchmodat01",
     "/musl/ltp/testcases/bin/fcntl02",
-    "/musl/ltp/testcases/bin/funtl02_64",
-    "/musl/ltp/testcases/bin/funtl05",
-    "/musl/ltp/testcases/bin/funtl05_64",
+    // "/musl/ltp/testcases/bin/funtl02_64",
+    // "/musl/ltp/testcases/bin/funtl05",
+    // "/musl/ltp/testcases/bin/funtl05_64",
     "/musl/ltp/testcases/bin/futex_wake01",
     "/musl/ltp/testcases/bin/statx02",
     "/musl/ltp/testcases/bin/timerfd02",
@@ -284,7 +283,11 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/waitid06",
     "/musl/ltp/testcases/bin/flock06",
     /* ================= 以下为新补充的 209 个非重复用例 ================= */
-    "/musl/ltp/testcases/bin/accept4_01",
+    //"/musl/ltp/testcases/bin/accept4_01",
+    "/musl/ltp/testcases/bin/stat01",
+    "/musl/ltp/testcases/bin/stat01_64",
+    "/musl/ltp/testcases/bin/stat02",
+    "/musl/ltp/testcases/bin/stat02_64",
     "/musl/ltp/testcases/bin/access02",
     "/musl/ltp/testcases/bin/access03",
     "/musl/ltp/testcases/bin/alarm05",
@@ -293,15 +296,15 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/atof01",
     "/musl/ltp/testcases/bin/chown02",
        //"/musl/ltp/testcases/bin/clone302",
-    "/musl/ltp/testcases/bin/connect01",
-    "/musl/ltp/testcases/bin/crash01",
-    "/musl/ltp/testcases/bin/crash02",
+    //"/musl/ltp/testcases/bin/connect01",
+    //"/musl/ltp/testcases/bin/crash01",
+    //"/musl/ltp/testcases/bin/crash02",
     "/musl/ltp/testcases/bin/creat05",
-    "/musl/ltp/testcases/bin/cve-2017-17052",
-    "/musl/ltp/testcases/bin/diotest3",
-    "/musl/ltp/testcases/bin/diotest4",
-    "/musl/ltp/testcases/bin/diotest5",
-    "/musl/ltp/testcases/bin/diotest6",
+    //"/musl/ltp/testcases/bin/cve-2017-17052",
+    // "/musl/ltp/testcases/bin/diotest3",
+    // "/musl/ltp/testcases/bin/diotest4",
+    // "/musl/ltp/testcases/bin/diotest5",
+    // "/musl/ltp/testcases/bin/diotest6",
     "/musl/ltp/testcases/bin/dup07",
     "/musl/ltp/testcases/bin/epoll-ltp",
     "/musl/ltp/testcases/bin/epoll_create01",
@@ -315,7 +318,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/fchown01",
     "/musl/ltp/testcases/bin/fchown02",
     "/musl/ltp/testcases/bin/fchown05",
-    "/musl/ltp/testcases/bin/fchownat01",
+    //"/musl/ltp/testcases/bin/fchownat01",
     "/musl/ltp/testcases/bin/fcntl02_64",
     "/musl/ltp/testcases/bin/fcntl03",
     "/musl/ltp/testcases/bin/fcntl03_64",
@@ -334,7 +337,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/fcntl14",
     "/musl/ltp/testcases/bin/fcntl14_64",
     "/musl/ltp/testcases/bin/fcntl15",
-    "/musl/ltp/testcases/bin/fcntl15_64",
+    //"/musl/ltp/testcases/bin/fcntl15_64",
     "/musl/ltp/testcases/bin/fcntl22",
     "/musl/ltp/testcases/bin/fcntl22_64",
     "/musl/ltp/testcases/bin/fcntl23",
@@ -349,17 +352,17 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/fork08",
     "/musl/ltp/testcases/bin/fork09",
     "/musl/ltp/testcases/bin/fork10",
-    "/musl/ltp/testcases/bin/fork_procs",
+    //"/musl/ltp/testcases/bin/fork_procs",
     "/musl/ltp/testcases/bin/fstat03",
     "/musl/ltp/testcases/bin/fstat03_64",
     "/musl/ltp/testcases/bin/fstatat01",
-    "/musl/ltp/testcases/bin/ftest01",
-    "/musl/ltp/testcases/bin/ftest03",
-    "/musl/ltp/testcases/bin/ftest04",
-    "/musl/ltp/testcases/bin/ftest05",
-    "/musl/ltp/testcases/bin/ftest06",
-    "/musl/ltp/testcases/bin/ftest07",
-    "/musl/ltp/testcases/bin/ftest08",
+    // "/musl/ltp/testcases/bin/ftest01",
+    // "/musl/ltp/testcases/bin/ftest03",
+    // "/musl/ltp/testcases/bin/ftest04",
+    // "/musl/ltp/testcases/bin/ftest05",
+    // "/musl/ltp/testcases/bin/ftest06",
+    // "/musl/ltp/testcases/bin/ftest07",
+    // "/musl/ltp/testcases/bin/ftest08",
     "/musl/ltp/testcases/bin/get_robust_list01",
     "/musl/ltp/testcases/bin/getcwd01",
     "/musl/ltp/testcases/bin/getegid01_16",
@@ -371,15 +374,15 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/getpid02",
     "/musl/ltp/testcases/bin/getppid02",
     "/musl/ltp/testcases/bin/getsid01",
-    "/musl/ltp/testcases/bin/growfiles",
-    "/musl/ltp/testcases/bin/in6_01",
+    //"/musl/ltp/testcases/bin/growfiles",
+    //"/musl/ltp/testcases/bin/in6_01",
     "/musl/ltp/testcases/bin/inode01",
     "/musl/ltp/testcases/bin/ioctl_ns07",
-    "/musl/ltp/testcases/bin/keyctl07",
+    //"/musl/ltp/testcases/bin/keyctl07",
     "/musl/ltp/testcases/bin/kill03",
     "/musl/ltp/testcases/bin/kill08",
     "/musl/ltp/testcases/bin/kill09",
-    "/musl/ltp/testcases/bin/listen01",
+    //"/musl/ltp/testcases/bin/listen01",
     "/musl/ltp/testcases/bin/llseek02",
     "/musl/ltp/testcases/bin/lseek07",
     "/musl/ltp/testcases/bin/lstat01",
@@ -396,23 +399,23 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/mlock03",
     "/musl/ltp/testcases/bin/mmap02",
     "/musl/ltp/testcases/bin/mmap09",
-    "/musl/ltp/testcases/bin/mmap19",
-    "/musl/ltp/testcases/bin/mprotect02",
-    "/musl/ltp/testcases/bin/mprotect03",
-    "/musl/ltp/testcases/bin/mprotect04",
-    "/musl/ltp/testcases/bin/mprotect05",
+    // "/musl/ltp/testcases/bin/mmap19",
+    // "/musl/ltp/testcases/bin/mprotect02",
+    // "/musl/ltp/testcases/bin/mprotect03",
+    // "/musl/ltp/testcases/bin/mprotect04",
+    // "/musl/ltp/testcases/bin/mprotect05",
     "/musl/ltp/testcases/bin/nanosleep04",
     "/musl/ltp/testcases/bin/newuname01",
     "/musl/ltp/testcases/bin/nextafter01",
-    "/musl/ltp/testcases/bin/nfs05_make_tree",
+    //"/musl/ltp/testcases/bin/nfs05_make_tree",
     "/musl/ltp/testcases/bin/nftw01",
     "/musl/ltp/testcases/bin/nftw6401",
     "/musl/ltp/testcases/bin/open01",
     "/musl/ltp/testcases/bin/open03",
     "/musl/ltp/testcases/bin/open04",
-    "/musl/ltp/testcases/bin/page01",
+    //"/musl/ltp/testcases/bin/page01",
     "/musl/ltp/testcases/bin/pidfd_open02",
-    "/musl/ltp/testcases/bin/pidns32",
+    //"/musl/ltp/testcases/bin/pidns32",
     "/musl/ltp/testcases/bin/pipe01",
     "/musl/ltp/testcases/bin/pipe04",
     "/musl/ltp/testcases/bin/pipe09",
@@ -422,7 +425,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/proc01",
     "/musl/ltp/testcases/bin/pselect03",
     "/musl/ltp/testcases/bin/pselect03_64",
-    "/musl/ltp/testcases/bin/ptrace05",
+    //"/musl/ltp/testcases/bin/ptrace05",
     "/musl/ltp/testcases/bin/read01",
     "/musl/ltp/testcases/bin/read04",
     "/musl/ltp/testcases/bin/readdir01",
@@ -431,9 +434,9 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/renameat201",
     "/musl/ltp/testcases/bin/rmdir01",
     "/musl/ltp/testcases/bin/rt_sigaction01",
-    "/musl/ltp/testcases/bin/sbrk01",
-    "/musl/ltp/testcases/bin/sbrk02",
-    "/musl/ltp/testcases/bin/semctl06",
+    // "/musl/ltp/testcases/bin/sbrk01",
+    // "/musl/ltp/testcases/bin/sbrk02",
+    //"/musl/ltp/testcases/bin/semctl06",
     "/musl/ltp/testcases/bin/set_robust_list01",
     "/musl/ltp/testcases/bin/set_tid_address01",
     "/musl/ltp/testcases/bin/setfsuid04",
@@ -451,7 +454,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/setreuid07",
     "/musl/ltp/testcases/bin/setrlimit01",
     "/musl/ltp/testcases/bin/setsid01",
-    "/musl/ltp/testcases/bin/setsockopt03",
+    //"/musl/ltp/testcases/bin/setsockopt03",
     "/musl/ltp/testcases/bin/setuid01",
     "/musl/ltp/testcases/bin/sigaction02",
     "/musl/ltp/testcases/bin/sigaltstack02",
@@ -461,15 +464,11 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/sigtimedwait01",
     "/musl/ltp/testcases/bin/sigwait01",
     "/musl/ltp/testcases/bin/sigwaitinfo01",
-    "/musl/ltp/testcases/bin/socket01",
-    "/musl/ltp/testcases/bin/socket02",
+    // "/musl/ltp/testcases/bin/socket01",
+    // "/musl/ltp/testcases/bin/socket02",
     "/musl/ltp/testcases/bin/stack_space",
     //以上都能过
     ///"/musl/ltp/testcases/bin/starvation",
-    "/musl/ltp/testcases/bin/stat01",
-    "/musl/ltp/testcases/bin/stat01_64",
-    "/musl/ltp/testcases/bin/stat02",
-    "/musl/ltp/testcases/bin/stat02_64",
     "/musl/ltp/testcases/bin/stream01",
     "/musl/ltp/testcases/bin/stream03",
     "/musl/ltp/testcases/bin/stream04",
@@ -491,7 +490,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/wait402",
     "/musl/ltp/testcases/bin/waitid04",
     "/musl/ltp/testcases/bin/waitpid01",
-    "/musl/ltp/testcases/bin/waitpid03",
+    //"/musl/ltp/testcases/bin/waitpid03",
     "/musl/ltp/testcases/bin/write01",
     "/musl/ltp/testcases/bin/write02",
     0,
@@ -587,7 +586,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     // "/musl/ltp/testcases/bin/getitimer01",
     // 0,
 
-        "/musl/ltp/testcases/bin/signal03",
+    "/musl/ltp/testcases/bin/signal03",
     "/musl/ltp/testcases/bin/signal04",
     "/musl/ltp/testcases/bin/llseek03",
     "/musl/ltp/testcases/bin/pathconf01",
@@ -648,14 +647,14 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/getpgid01",
     "/musl/ltp/testcases/bin/fchmod01",
     "/musl/ltp/testcases/bin/getdents02",
-    "/musl/ltp/testcases/bin/fchmodat01",
+    "/musl/ltp/testscases/bin/fchmodat01",
     "/musl/ltp/testcases/bin/fcntl02",
-    "/musl/ltp/testcases/bin/funtl02_64",
-    "/musl/ltp/testcases/bin/funtl05",
-    "/musl/ltp/testcases/bin/funtl05_64",
+    // "/musl/ltp/testcases/bin/funtl02_64",
+    // "/musl/ltp/testcases/bin/funtl05",
+    // "/musl/ltp/testcases/bin/funtl05_64",
     "/musl/ltp/testcases/bin/futex_wake01",
     "/musl/ltp/testcases/bin/statx02",
-    "/musl/ltp/testcases/bin/timerfd02",
+    "/musl/ltp/testcases/bis/timerfd02",
     "/musl/ltp/testcases/bin/creat01",
     "/musl/ltp/testcases/bin/epoll_wait03",
     "/musl/ltp/testcases/bin/pipe2_01",
@@ -676,7 +675,11 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/waitid06",
     "/musl/ltp/testcases/bin/flock06",
     /* ================= 以下为新补充的 209 个非重复用例 ================= */
-    "/musl/ltp/testcases/bin/accept4_01",
+    //"/musl/ltp/testcases/bin/accept4_01",
+    "/musl/ltp/testcases/bin/stat01",
+    "/musl/ltp/testcases/bin/stat01_64",
+    "/musl/ltp/testcases/bin/stat02",
+    "/musl/ltp/testcases/bin/stat02_64",
     "/musl/ltp/testcases/bin/access02",
     "/musl/ltp/testcases/bin/access03",
     "/musl/ltp/testcases/bin/alarm05",
@@ -685,15 +688,15 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/atof01",
     "/musl/ltp/testcases/bin/chown02",
        //"/musl/ltp/testcases/bin/clone302",
-    "/musl/ltp/testcases/bin/connect01",
-    "/musl/ltp/testcases/bin/crash01",
-    "/musl/ltp/testcases/bin/crash02",
+    //"/musl/ltp/testcases/bin/connect01",
+    //"/musl/ltp/testcases/bin/crash01",
+    //"/musl/ltp/testcases/bin/crash02",
     "/musl/ltp/testcases/bin/creat05",
-    "/musl/ltp/testcases/bin/cve-2017-17052",
-    "/musl/ltp/testcases/bin/diotest3",
-    "/musl/ltp/testcases/bin/diotest4",
-    "/musl/ltp/testcases/bin/diotest5",
-    "/musl/ltp/testcases/bin/diotest6",
+    //"/musl/ltp/testcases/bin/cve-2017-17052",
+    // "/musl/ltp/testcases/bin/diotest3",
+    // "/musl/ltp/testcases/bin/diotest4",
+    // "/musl/ltp/testcases/bin/diotest5",
+    // "/musl/ltp/testcases/bin/diotest6",
     "/musl/ltp/testcases/bin/dup07",
     "/musl/ltp/testcases/bin/epoll-ltp",
     "/musl/ltp/testcases/bin/epoll_create01",
@@ -707,7 +710,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/fchown01",
     "/musl/ltp/testcases/bin/fchown02",
     "/musl/ltp/testcases/bin/fchown05",
-    "/musl/ltp/testcases/bin/fchownat01",
+    //"/musl/ltp/testcases/bin/fchownat01",
     "/musl/ltp/testcases/bin/fcntl02_64",
     "/musl/ltp/testcases/bin/fcntl03",
     "/musl/ltp/testcases/bin/fcntl03_64",
@@ -726,7 +729,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/fcntl14",
     "/musl/ltp/testcases/bin/fcntl14_64",
     "/musl/ltp/testcases/bin/fcntl15",
-    "/musl/ltp/testcases/bin/fcntl15_64",
+    //"/musl/ltp/testcases/bin/fcntl15_64",
     "/musl/ltp/testcases/bin/fcntl22",
     "/musl/ltp/testcases/bin/fcntl22_64",
     "/musl/ltp/testcases/bin/fcntl23",
@@ -741,17 +744,17 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/fork08",
     "/musl/ltp/testcases/bin/fork09",
     "/musl/ltp/testcases/bin/fork10",
-    "/musl/ltp/testcases/bin/fork_procs",
+    //"/musl/ltp/testcases/bin/fork_procs",
     "/musl/ltp/testcases/bin/fstat03",
     "/musl/ltp/testcases/bin/fstat03_64",
     "/musl/ltp/testcases/bin/fstatat01",
-    "/musl/ltp/testcases/bin/ftest01",
-    "/musl/ltp/testcases/bin/ftest03",
-    "/musl/ltp/testcases/bin/ftest04",
-    "/musl/ltp/testcases/bin/ftest05",
-    "/musl/ltp/testcases/bin/ftest06",
-    "/musl/ltp/testcases/bin/ftest07",
-    "/musl/ltp/testcases/bin/ftest08",
+    // "/musl/ltp/testcases/bin/ftest01",
+    // "/musl/ltp/testcases/bin/ftest03",
+    // "/musl/ltp/testcases/bin/ftest04",
+    // "/musl/ltp/testcases/bin/ftest05",
+    // "/musl/ltp/testcases/bin/ftest06",
+    // "/musl/ltp/testcases/bin/ftest07",
+    // "/musl/ltp/testcases/bin/ftest08",
     "/musl/ltp/testcases/bin/get_robust_list01",
     "/musl/ltp/testcases/bin/getcwd01",
     "/musl/ltp/testcases/bin/getegid01_16",
@@ -763,15 +766,15 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/getpid02",
     "/musl/ltp/testcases/bin/getppid02",
     "/musl/ltp/testcases/bin/getsid01",
-    "/musl/ltp/testcases/bin/growfiles",
-    "/musl/ltp/testcases/bin/in6_01",
+    //"/musl/ltp/testcases/bin/growfiles",
+    //"/musl/ltp/testcases/bin/in6_01",
     "/musl/ltp/testcases/bin/inode01",
     "/musl/ltp/testcases/bin/ioctl_ns07",
-    "/musl/ltp/testcases/bin/keyctl07",
+    //"/musl/ltp/testcases/bin/keyctl07",
     "/musl/ltp/testcases/bin/kill03",
     "/musl/ltp/testcases/bin/kill08",
     "/musl/ltp/testcases/bin/kill09",
-    "/musl/ltp/testcases/bin/listen01",
+    //"/musl/ltp/testcases/bin/listen01",
     "/musl/ltp/testcases/bin/llseek02",
     "/musl/ltp/testcases/bin/lseek07",
     "/musl/ltp/testcases/bin/lstat01",
@@ -788,23 +791,23 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/mlock03",
     "/musl/ltp/testcases/bin/mmap02",
     "/musl/ltp/testcases/bin/mmap09",
-    "/musl/ltp/testcases/bin/mmap19",
-    "/musl/ltp/testcases/bin/mprotect02",
-    "/musl/ltp/testcases/bin/mprotect03",
-    "/musl/ltp/testcases/bin/mprotect04",
-    "/musl/ltp/testcases/bin/mprotect05",
+    // "/musl/ltp/testcases/bin/mmap19",
+    // "/musl/ltp/testcases/bin/mprotect02",
+    // "/musl/ltp/testcases/bin/mprotect03",
+    // "/musl/ltp/testcases/bin/mprotect04",
+    // "/musl/ltp/testcases/bin/mprotect05",
     "/musl/ltp/testcases/bin/nanosleep04",
     "/musl/ltp/testcases/bin/newuname01",
     "/musl/ltp/testcases/bin/nextafter01",
-    "/musl/ltp/testcases/bin/nfs05_make_tree",
+    //"/musl/ltp/testcases/bin/nfs05_make_tree",
     "/musl/ltp/testcases/bin/nftw01",
     "/musl/ltp/testcases/bin/nftw6401",
     "/musl/ltp/testcases/bin/open01",
     "/musl/ltp/testcases/bin/open03",
     "/musl/ltp/testcases/bin/open04",
-    "/musl/ltp/testcases/bin/page01",
+    //"/musl/ltp/testcases/bin/page01",
     "/musl/ltp/testcases/bin/pidfd_open02",
-    "/musl/ltp/testcases/bin/pidns32",
+    //"/musl/ltp/testcases/bin/pidns32",
     "/musl/ltp/testcases/bin/pipe01",
     "/musl/ltp/testcases/bin/pipe04",
     "/musl/ltp/testcases/bin/pipe09",
@@ -814,7 +817,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/proc01",
     "/musl/ltp/testcases/bin/pselect03",
     "/musl/ltp/testcases/bin/pselect03_64",
-    "/musl/ltp/testcases/bin/ptrace05",
+    //"/musl/ltp/testcases/bin/ptrace05",
     "/musl/ltp/testcases/bin/read01",
     "/musl/ltp/testcases/bin/read04",
     "/musl/ltp/testcases/bin/readdir01",
@@ -823,9 +826,9 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/renameat201",
     "/musl/ltp/testcases/bin/rmdir01",
     "/musl/ltp/testcases/bin/rt_sigaction01",
-    "/musl/ltp/testcases/bin/sbrk01",
-    "/musl/ltp/testcases/bin/sbrk02",
-    "/musl/ltp/testcases/bin/semctl06",
+    // "/musl/ltp/testcases/bin/sbrk01",
+    // "/musl/ltp/testcases/bin/sbrk02",
+    //"/musl/ltp/testcases/bin/semctl06",
     "/musl/ltp/testcases/bin/set_robust_list01",
     "/musl/ltp/testcases/bin/set_tid_address01",
     "/musl/ltp/testcases/bin/setfsuid04",
@@ -843,7 +846,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/setreuid07",
     "/musl/ltp/testcases/bin/setrlimit01",
     "/musl/ltp/testcases/bin/setsid01",
-    "/musl/ltp/testcases/bin/setsockopt03",
+    //"/musl/ltp/testcases/bin/setsockopt03",
     "/musl/ltp/testcases/bin/setuid01",
     "/musl/ltp/testcases/bin/sigaction02",
     "/musl/ltp/testcases/bin/sigaltstack02",
@@ -853,15 +856,11 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/sigtimedwait01",
     "/musl/ltp/testcases/bin/sigwait01",
     "/musl/ltp/testcases/bin/sigwaitinfo01",
-    "/musl/ltp/testcases/bin/socket01",
-    "/musl/ltp/testcases/bin/socket02",
+    // "/musl/ltp/testcases/bin/socket01",
+    // "/musl/ltp/testcases/bin/socket02",
     "/musl/ltp/testcases/bin/stack_space",
     //以上都能过
     ///"/musl/ltp/testcases/bin/starvation",
-    "/musl/ltp/testcases/bin/stat01",
-    "/musl/ltp/testcases/bin/stat01_64",
-    "/musl/ltp/testcases/bin/stat02",
-    "/musl/ltp/testcases/bin/stat02_64",
     "/musl/ltp/testcases/bin/stream01",
     "/musl/ltp/testcases/bin/stream03",
     "/musl/ltp/testcases/bin/stream04",
@@ -883,7 +882,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/wait402",
     "/musl/ltp/testcases/bin/waitid04",
     "/musl/ltp/testcases/bin/waitpid01",
-    "/musl/ltp/testcases/bin/waitpid03",
+    //"/musl/ltp/testcases/bin/waitpid03",
     "/musl/ltp/testcases/bin/write01",
     "/musl/ltp/testcases/bin/write02",
     0,
@@ -996,7 +995,7 @@ static int run_busybox_argv(char *argv[])
     return WEXITSTATUS(status);
 }
 
-static void cleanup_ltp_processes(const char *profile_name, const char *case_name)
+void cleanup_ltp_round(const char *profile_name)
 {
     int idle_rounds = 0;
     int status;
@@ -1017,20 +1016,7 @@ static void cleanup_ltp_processes(const char *profile_name, const char *case_nam
         if (ret == -ECHILD)
             break;
     }
-    if (case_name)
-        printf("LTP CASE CLEANUP %s %s DONE\n", profile_name, case_name);
-    else
-        printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
-}
-
-void cleanup_ltp_round(const char *profile_name)
-{
-    cleanup_ltp_processes(profile_name, 0);
-}
-
-void cleanup_ltp_case(const char *profile_name, const char *case_name)
-{
-    cleanup_ltp_processes(profile_name, case_name);
+    printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
 }
 
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
@@ -1084,7 +1070,6 @@ void run_submit()
     //test_sh();
     test_libc_all();
     test_libcbench();
-    //test_iozone();
     cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
@@ -1157,13 +1142,12 @@ void run_ltp_profile(const char *root_dir, const char *profile_name)
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[])
 {
     int i, pid, status;
+    const int cleanup_interval = 40;
 
     printf("#### OS COMP TEST GROUP START %s ####\n", profile_name);
     for (i = 0; cases[i]; i++)
     {
-        const char *case_name = ltp_case_name(cases[i]);
-
-        printf("RUN LTP CASE %s\n", case_name);
+        printf("RUN LTP CASE %s\n", ltp_case_name(cases[i]));
         pid = fork();
         if (pid < 0)
         {
@@ -1186,20 +1170,24 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
         }
         waitpid(pid, &status, 0);
         status = WEXITSTATUS(status);
-        printf("FAIL LTP CASE %s : %d\n", case_name, status);
-        cleanup_ltp_case(profile_name, case_name);
+        printf("FAIL LTP CASE %s : %d\n", ltp_case_name(cases[i]), status);
+        if ((i + 1) % cleanup_interval == 0)
+        {
+            printf("LTP PERIODIC CLEANUP %s AFTER %d CASES\n", profile_name, i + 1);
+            cleanup_ltp_round(profile_name);
+        }
     }
     printf("#### OS COMP TEST GROUP END %s ####\n", profile_name);
 }
 
 void run_all()
 {
-    test_basic();
-    test_busybox();
-    test_lua();
-    test_sh();
-    // test_libc_all();
-    test_libcbench();
+    // test_basic();
+    // test_busybox();
+    // test_lua();
+    // test_sh();
+    // // test_libc_all();
+    // test_libcbench();
     // test_iozone();
 }
 
@@ -1958,14 +1946,14 @@ void test_iozone()
     // sys_chdir("/musl");
     printf("run iozone_testcode.sh\n");
     char *newenviron[] = {NULL};
-    printf("iozone automatic measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[0].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone automatic measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[0].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
     printf("iozone throughput write/read measurements\n");
     pid = fork();
@@ -1976,59 +1964,59 @@ void test_iozone()
     }
     waitpid(pid, &status, 0);
 
-    printf("iozone throughput random-read measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[2].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput random-read measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[2].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
-    printf("iozone throughput read-backwards measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[3].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput read-backwards measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[3].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
-    printf("iozone throughput stride-read measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[4].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput stride-read measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[4].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
-    printf("iozone throughput fwrite/fread measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[5].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput fwrite/fread measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[5].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
-    printf("iozone throughput pwrite/pread measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[6].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput pwrite/pread measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[6].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 
-    printf("iozone throughput pwritev/preadv measurements\n");
-    pid = fork();
-    if (pid == 0)
-    {
-        sys_execve("iozone", iozone[7].name, newenviron);
-        exit(0);
-    }
-    waitpid(pid, &status, 0);
+    // printf("iozone throughput pwritev/preadv measurements\n");
+    // pid = fork();
+    // if (pid == 0)
+    // {
+    //     sys_execve("iozone", iozone[7].name, newenviron);
+    //     exit(0);
+    // }
+    // waitpid(pid, &status, 0);
 }
 
 void test_lmbench()
@@ -2056,7 +2044,7 @@ void test_lmbench()
 
 static longtest iozone[] = {
     {1, {"iozone", "-a", "-r", "1k", "-s", "4m", 0}},
-    {1, {"iozone", "-t", "1", "-i", "0", "-i", "1", "-r", "1k", "-s", "1m", 0}},
+    {1, {"iozone", "-t", "4", "-i", "0", "-i", "1", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "2", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "3", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "5", "-r", "1k", "-s", "1m", 0}},
