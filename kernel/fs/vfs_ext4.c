@@ -31,6 +31,7 @@
 
 #include "vmem.h"
 #include "cpu.h"
+#include "errno-base.h"
 
 static struct sleeplock vfs_ext4_lock;
 static struct spinlock vfs_ext4_lock_state;
@@ -254,6 +255,46 @@ vfs_ext4_flush(struct filesystem *fs)
         return -err;
 
     return EOK;
+}
+
+int
+vfs_ext4_file_flush(struct file *f)
+{
+    if (f == NULL || f->f_type != FD_REG || f->f_data.f_vnode.fs == NULL)
+        return -EINVAL;
+    if (f->f_data.f_vnode.fs->type != EXT4)
+        return -ENOSYS;
+    return vfs_ext4_flush(f->f_data.f_vnode.fs);
+}
+
+int
+vfs_ext4_ftruncate(struct file *f, uint64_t size)
+{
+    struct ext4_file *file;
+    int status;
+
+    if (f == NULL || f->f_type != FD_REG)
+        return -EINVAL;
+    if (f->f_data.f_vnode.fs == NULL || f->f_data.f_vnode.fs->type != EXT4)
+        return -ENOSYS;
+
+    file = (struct ext4_file *)f->f_data.f_vnode.data;
+    if (file == NULL)
+        panic("Getting f's ext4 file failed.\n");
+
+    status = ext4_ftruncate(file, size);
+    if (status != EOK)
+        return -status;
+
+    f->f_pos = file->fpos;
+    if (f->f_pos > size)
+    {
+        status = ext4_fseek(file, size, SEEK_SET);
+        if (status != EOK)
+            return -status;
+        f->f_pos = file->fpos;
+    }
+    return 0;
 }
 
 /**
