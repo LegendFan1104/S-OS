@@ -70,6 +70,7 @@ typedef struct proc
     int exit_state;
     int killed;
     int term_signal;
+    int reparented_to_init;
     int pid;
     int pgid;
     int sid;
