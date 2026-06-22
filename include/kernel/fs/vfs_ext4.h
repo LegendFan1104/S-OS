@@ -21,8 +21,6 @@ int vfs_ext4_init(void);
 
 /* 开放的VFS层的EXT4系统的接口 */
 int vfs_ext4_flush(struct filesystem *fs);
-int vfs_ext4_file_flush(struct file *f);
-int vfs_ext4_ftruncate(struct file *f, uint64_t size);
 int vfs_ext4_ioctl(struct file *f, int cmd, void *args);
 extern struct filesystem_op EXT4_FS_OP;
 

@@ -14,7 +14,7 @@
 #include "list.h"
 #include "resource.h"
 
-#define NPROC (128)
+#define NPROC (256)
 
 /* Cloning flags.  */
 #define CSIGNAL 0x000000ff
@@ -70,7 +70,6 @@ typedef struct proc
     int exit_state;
     int killed;
     int term_signal;
-    int reparented_to_init;
     int pid;
     int pgid;
     int sid;
