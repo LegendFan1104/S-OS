@@ -95,6 +95,7 @@ typedef struct proc
     struct itimerval itimer;
     uint64 alarm_ticks;
     int timer_active;
+    struct list_elem timer_elem;
 
     struct file *ofile[NOFILE];
     struct file_vnode cwd;
