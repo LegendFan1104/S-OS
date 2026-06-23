@@ -1052,8 +1052,11 @@ int sleep(timespec_t *req, timespec_t *rem)
     acquire(&tickslock);
     while ((now_ns = r_time() * 1000000000ULL / CLK_FREQ) < deadline_ns)
     {
-        if (p->killed)
+        unsigned long pending = p->sig_pending.__val[0] & ~p->sig_set.__val[0];
+
+        if (p->killed || pending)
         {
+            p->sig_pending.__val[0] &= ~pending;
             release(&tickslock);
             if (rem)
             {
@@ -1136,6 +1139,7 @@ static int sys_settimer_impl(int which, uint64 new_value, uint64 old_value)
         if (new_timer.it_value.usec >= 1000000 || new_timer.it_interval.usec >= 1000000)
             return -EINVAL;
 
+        push_off();
         p->itimer = new_timer;
         value_ticks = new_timer.it_value.sec * CLK_FREQ +
                       new_timer.it_value.usec * (CLK_FREQ / 1000000);
@@ -1149,6 +1153,8 @@ static int sys_settimer_impl(int which, uint64 new_value, uint64 old_value)
             p->timer_active = 1;
             p->alarm_ticks = now + value_ticks;
         }
+        timer_sync_process_alarm(p);
+        pop_off();
     }
 
     return 0;

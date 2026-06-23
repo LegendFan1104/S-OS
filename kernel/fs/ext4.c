@@ -1732,6 +1732,8 @@ int ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt) {
     struct ext4_inode_ref ref;
     const uint8_t *u8_buf = buf;
     int r, rr = EOK;
+    bool trans_started = false;
+    uint64_t write_end;
 
     ext4_assert(file && file->mp);
 
@@ -1745,7 +1747,6 @@ int ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt) {
         return EOK;
 
     EXT4_MP_LOCK(file->mp);
-    ext4_trans_start(file->mp);
 
     struct ext4_fs *const fs = &file->mp->fs;
     struct ext4_sblock *const sb = &file->mp->fs.sb;
@@ -1763,6 +1764,12 @@ int ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt) {
     /*Sync file size*/
     file->fsize = ext4_inode_get_size(sb, ref.inode);
     block_size = ext4_sb_get_block_size(sb);
+    write_end = file->fpos + size;
+
+    if (write_end > file->fsize) {
+        ext4_trans_start(file->mp);
+        trans_started = true;
+    }
 
     iblock_last = (uint32_t) ((file->fpos + size) / block_size);
     iblk_idx = (uint32_t) (file->fpos / block_size);
@@ -1894,10 +1901,12 @@ out_fsize:
 Finish:
     r = ext4_fs_put_inode_ref(&ref);
 
-    if (r != EOK)
-        ext4_trans_abort(file->mp);
-    else
-        ext4_trans_stop(file->mp);
+    if (trans_started) {
+        if (r != EOK)
+            ext4_trans_abort(file->mp);
+        else
+            ext4_trans_stop(file->mp);
+    }
 
     EXT4_MP_UNLOCK(file->mp);
     return r;

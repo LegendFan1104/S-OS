@@ -25,6 +25,11 @@ typedef struct timeval {
     uint64 usec;     // 微秒
 } timeval_t;
 
+typedef struct timespec {
+    uint64 tv_sec;
+    uint64 tv_nsec;
+} timespec_t;
+
 typedef struct tms
 {
     long tms_utime;  ///< 用户态时间

@@ -48,6 +48,12 @@ is_interior (struct list_elem *elem)
   return elem != NULL && elem->prev != NULL && elem->next != NULL;
 }
 
+bool
+list_elem_linked (const struct list_elem *elem)
+{
+  return elem != NULL && elem->prev != NULL && elem->next != NULL;
+}
+
 /** Returns true if ELEM is a tail, false otherwise. */
 static inline bool
 is_tail (struct list_elem *elem)
@@ -169,6 +175,7 @@ list_insert (struct list_elem *before, struct list_elem *elem)
 {
   ASSERT (is_interior (before) || is_tail (before));
   ASSERT (elem != NULL);
+  ASSERT (elem->prev == NULL && elem->next == NULL);
 
   elem->prev = before->prev;
   elem->next = before;
@@ -247,10 +254,14 @@ list_push_back (struct list *list, struct list_elem *elem)
 struct list_elem *
 list_remove (struct list_elem *elem)
 {
+  struct list_elem *next;
   ASSERT (is_interior (elem));
+  next = elem->next;
   elem->prev->next = elem->next;
   elem->next->prev = elem->prev;
-  return elem->next;
+  elem->prev = NULL;
+  elem->next = NULL;
+  return next;
 }
 
 /** Removes the front element from LIST and returns it.

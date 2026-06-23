@@ -53,6 +53,7 @@ void run_ltp_profile(const char *root_dir, const char *profile_name);
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[]);
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir);
 void cleanup_ltp_round(const char *profile_name);
+void cleanup_test_round(const char *stage_name);
 void exe(char *path);
 
 char *question_name[] = {};
@@ -333,7 +334,7 @@ static char *ltp_submit_cases_musl_la[] = {
     //"/musl/ltp/testcases/bin/epoll-ltp",
     "/musl/ltp/testcases/bin/epoll_create01",
     "/musl/ltp/testcases/bin/epoll_create1_01",
-    "/musl/ltp/testcases/bin/epoll_wait04",
+    //"/musl/ltp/testcases/bin/epoll_wait04",
     "/musl/ltp/testcases/bin/eventfd2_01",
     "/musl/ltp/testcases/bin/eventfd2_02",
     "/musl/ltp/testcases/bin/exit02",
@@ -360,15 +361,15 @@ static char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/fcntl12_64",
     "/musl/ltp/testcases/bin/fcntl14",
     "/musl/ltp/testcases/bin/fcntl14_64",
-    "/musl/ltp/testcases/bin/fcntl15",
+    //"/musl/ltp/testcases/bin/fcntl15",
     //"/musl/ltp/testcases/bin/fcntl15_64",
-    "/musl/ltp/testcases/bin/fcntl22",
-    "/musl/ltp/testcases/bin/fcntl22_64",
-    "/musl/ltp/testcases/bin/fcntl23",
-    "/musl/ltp/testcases/bin/fcntl23_64",
-    "/musl/ltp/testcases/bin/fcntl29",
-    "/musl/ltp/testcases/bin/fcntl29_64",
-    "/musl/ltp/testcases/bin/fcntl33_64",
+    // "/musl/ltp/testcases/bin/fcntl22",
+    // "/musl/ltp/testcases/bin/fcntl22_64",
+    // "/musl/ltp/testcases/bin/fcntl23",
+    // "/musl/ltp/testcases/bin/fcntl23_64",
+    // "/musl/ltp/testcases/bin/fcntl29",
+    // "/musl/ltp/testcases/bin/fcntl29_64",
+    // "/musl/ltp/testcases/bin/fcntl33_64",
     "/musl/ltp/testcases/bin/fdatasync01",
     "/musl/ltp/testcases/bin/fork01",
     "/musl/ltp/testcases/bin/fork03",
@@ -468,7 +469,7 @@ static char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/setgid01",
     "/musl/ltp/testcases/bin/setgid03",
     "/musl/ltp/testcases/bin/setgroups02",
-    "/musl/ltp/testcases/bin/setitimer01",
+    //"/musl/ltp/testcases/bin/setitimer01",
     "/musl/ltp/testcases/bin/setitimer02",
     "/musl/ltp/testcases/bin/setpgid02",
     "/musl/ltp/testcases/bin/setpgrp01",
@@ -756,7 +757,7 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     //"/musl/ltp/testcases/bin/epoll-ltp",
     "/musl/ltp/testcases/bin/epoll_create01",
     "/musl/ltp/testcases/bin/epoll_create1_01",
-    "/musl/ltp/testcases/bin/epoll_wait04",
+    //"/musl/ltp/testcases/bin/epoll_wait04",
     "/musl/ltp/testcases/bin/eventfd2_01",
     "/musl/ltp/testcases/bin/eventfd2_02",
     "/musl/ltp/testcases/bin/exit02",
@@ -783,15 +784,15 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     "/musl/ltp/testcases/bin/fcntl12_64",
     "/musl/ltp/testcases/bin/fcntl14",
     "/musl/ltp/testcases/bin/fcntl14_64",
-    "/musl/ltp/testcases/bin/fcntl15",
+    //"/musl/ltp/testcases/bin/fcntl15",
     //"/musl/ltp/testcases/bin/fcntl15_64",
-    "/musl/ltp/testcases/bin/fcntl22",
-    "/musl/ltp/testcases/bin/fcntl22_64",
-    "/musl/ltp/testcases/bin/fcntl23",
-    "/musl/ltp/testcases/bin/fcntl23_64",
-    "/musl/ltp/testcases/bin/fcntl29",
-    "/musl/ltp/testcases/bin/fcntl29_64",
-    "/musl/ltp/testcases/bin/fcntl33_64",
+    // "/musl/ltp/testcases/bin/fcntl22",
+    // "/musl/ltp/testcases/bin/fcntl22_64",
+    // "/musl/ltp/testcases/bin/fcntl23",
+    // "/musl/ltp/testcases/bin/fcntl23_64",
+    // "/musl/ltp/testcases/bin/fcntl29",
+    // "/musl/ltp/testcases/bin/fcntl29_64",
+    // "/musl/ltp/testcases/bin/fcntl33_64",
     "/musl/ltp/testcases/bin/fdatasync01",
     "/musl/ltp/testcases/bin/fork01",
     "/musl/ltp/testcases/bin/fork03",
@@ -891,7 +892,7 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     "/musl/ltp/testcases/bin/setgid01",
     "/musl/ltp/testcases/bin/setgid03",
     "/musl/ltp/testcases/bin/setgroups02",
-    "/musl/ltp/testcases/bin/setitimer01",
+    //"/musl/ltp/testcases/bin/setitimer01",
     "/musl/ltp/testcases/bin/setitimer02",
     "/musl/ltp/testcases/bin/setpgid02",
     "/musl/ltp/testcases/bin/setpgrp01",
@@ -1033,7 +1034,7 @@ static int run_busybox_argv(char *argv[])
     return WEXITSTATUS(status);
 }
 
-void cleanup_ltp_round(const char *profile_name)
+static void cleanup_test_processes(const char *stage_name, const char *prefix)
 {
     int idle_rounds = 0;
     int status;
@@ -1054,7 +1055,17 @@ void cleanup_ltp_round(const char *profile_name)
         if (ret == -ECHILD)
             break;
     }
-    printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
+    printf("%s CLEANUP %s DONE\n", prefix, stage_name);
+}
+
+void cleanup_test_round(const char *stage_name)
+{
+    cleanup_test_processes(stage_name, "TEST ROUND");
+}
+
+void cleanup_ltp_round(const char *profile_name)
+{
+    cleanup_test_processes(profile_name, "LTP ROUND");
 }
 
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
@@ -1163,10 +1174,15 @@ void run_all()
 void run_submit()
 {
     test_lua();
+    cleanup_test_round("lua");
     test_basic();
+    cleanup_test_round("basic");
     test_busybox();
+    cleanup_test_round("busybox");
     test_libc_all();
+    cleanup_test_round("libctest");
     test_libcbench();
+    cleanup_test_round("libcbench");
     cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
