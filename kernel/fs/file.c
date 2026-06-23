@@ -483,9 +483,17 @@ filealloc(void)
     {
         if(f->f_count == 0){
             f->f_count = 1;
+            f->f_type = FD_NONE;
+            f->f_mode = 0;
+            f->f_flags = 0;
+            f->f_pos = 0;
+            f->f_major = 0;
+            f->f_path[0] = '\0';
             f->f_time_update_sec = 0;
             f->f_time_dirty = 0;
             f->f_is_dir = 0;
+            f->removed = 0;
+            memset(&f->f_data, 0, sizeof(f->f_data));
             release(&ftable.lock);
             return f;
         }
@@ -614,7 +622,11 @@ int fileclose(struct file *f)
         LOG_LEVEL(LOG_DEBUG, "close file or dir %s for busybox\n", ff.f_path);
 #endif
     }else if(ff.f_type == FD_SOCKET){
-        DEBUG_LOG_LEVEL(LOG_WARNING,"[todo] 释放socket资源");
+        if (ff.f_data.sock)
+        {
+            ff.f_data.sock->state = SOCKET_CLOSED;
+            kfree(ff.f_data.sock);
+        }
     } else if (ff.f_type == FD_EPOLL) {
         /* Minimal epoll stub has no backing resources yet. */
     } else if (ff.f_type == FD_EVENTFD) {

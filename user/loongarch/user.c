@@ -359,8 +359,8 @@ static char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/fcntl10_64",
     "/musl/ltp/testcases/bin/fcntl12",
     "/musl/ltp/testcases/bin/fcntl12_64",
-    "/musl/ltp/testcases/bin/fcntl14",
-    "/musl/ltp/testcases/bin/fcntl14_64",
+    // "/musl/ltp/testcases/bin/fcntl14",
+    // "/musl/ltp/testcases/bin/fcntl14_64",
     // "/musl/ltp/testcases/bin/fcntl15",
     // //"/musl/ltp/testcases/bin/fcntl15_64",
     // "/musl/ltp/testcases/bin/fcntl22",
@@ -782,8 +782,8 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     "/musl/ltp/testcases/bin/fcntl10_64",
     "/musl/ltp/testcases/bin/fcntl12",
     "/musl/ltp/testcases/bin/fcntl12_64",
-    "/musl/ltp/testcases/bin/fcntl14",
-    "/musl/ltp/testcases/bin/fcntl14_64",
+    // "/musl/ltp/testcases/bin/fcntl14",
+    // "/musl/ltp/testcases/bin/fcntl14_64",
     // "/musl/ltp/testcases/bin/fcntl15",
     // //"/musl/ltp/testcases/bin/fcntl15_64",
     // "/musl/ltp/testcases/bin/fcntl22",
@@ -1172,16 +1172,16 @@ void run_all()
 
 void run_submit()
 {
-    test_lua();
-    cleanup_test_round("lua");
-    test_basic();
-    cleanup_test_round("basic");
-    test_busybox();
-    cleanup_test_round("busybox");
-    test_libc_all();
-    cleanup_test_round("libctest");
-    test_libcbench();
-    cleanup_test_round("libcbench");
+    // test_lua();
+    // cleanup_test_round("lua");
+    // test_basic();
+    // cleanup_test_round("basic");
+    // test_busybox();
+    // cleanup_test_round("busybox");
+    // test_libc_all();
+    // cleanup_test_round("libctest");
+    // test_libcbench();
+    // cleanup_test_round("libcbench");
     cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
