@@ -3335,7 +3335,7 @@ alloc_connected_socket_fd(struct socket *listener, struct sockaddr_in *remote_ad
     sock = kalloc();
     if (!sock)
     {
-        f->f_count = 0;
+        get_file_ops()->close(f);
         return -ENOMEM;
     }
 
@@ -3354,7 +3354,7 @@ alloc_connected_socket_fd(struct socket *listener, struct sockaddr_in *remote_ad
     fd = fdalloc(f);
     if (fd < 0)
     {
-        f->f_count = 0;
+        get_file_ops()->close(f);
         return -EMFILE;
     }
     return fd;
