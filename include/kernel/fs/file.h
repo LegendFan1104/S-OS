@@ -82,8 +82,6 @@ struct file
     char f_path[MAXPATH]; ///< 文件完整路径，便于调试或日志，也可能有管理作用
 
     uint64 f_time_update_sec;
-    uint8 f_time_dirty;
-    uint8 f_is_dir;
     uint32 removed; /* 
                      * when calling sys_unlinkat, mark as removed;
                      * when file ref is 0, REMOVE it in generic_fileclose
