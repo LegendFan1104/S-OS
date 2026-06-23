@@ -20,6 +20,8 @@
 extern struct spinlock tickslock;
 extern uint ticks;
 
+struct proc;
+
 typedef struct tms
 {
     long tms_utime;  ///< 用户态时间
@@ -75,6 +77,8 @@ void set_next_timeout(void);
 void countdown_timer_init(void);
 #endif
 void timer_tick();
+void timer_sync_process_alarm(struct proc *p);
+void timer_cancel_process_alarm(struct proc *p);
 uint64 get_times(uint64 utmsj);
 timeval_t timer_get_time();
 timespec_t timer_get_ntime();

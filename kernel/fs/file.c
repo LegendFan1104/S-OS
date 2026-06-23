@@ -484,6 +484,8 @@ filealloc(void)
         if(f->f_count == 0){
             f->f_count = 1;
             f->f_time_update_sec = 0;
+            f->f_time_dirty = 0;
+            f->f_is_dir = 0;
             release(&ftable.lock);
             return f;
         }
@@ -579,7 +581,7 @@ int fileclose(struct file *f)
     {
         if (ff.f_data.f_vnode.fs->type == EXT4) 
         {       
-            if (vfs_ext4_is_dir(ff.f_path) == 0) 
+            if (ff.f_is_dir) 
                 vfs_ext4_dirclose(&ff);
             else 
                 vfs_ext4_fclose(&ff);
@@ -593,7 +595,7 @@ int fileclose(struct file *f)
         {
             // panic("我还没写(๑>؂<๑)\n");
             /* @todo 测例好像哪怕挂载了vfat，也是用ext4来读写的 */
-            if (vfs_ext4_is_dir(ff.f_path) == 0) 
+            if (ff.f_is_dir) 
                 vfs_ext4_dirclose(&ff);
             else 
                 vfs_ext4_fclose(&ff);

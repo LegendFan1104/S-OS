@@ -38,6 +38,10 @@ static int vfs_ext4_lock_ready;
 static int vfs_ext4_lock_owner_tid = -1;
 static int vfs_ext4_lock_depth;
 
+#define VFS_EXT4_IOBUF_SIZE 512
+
+static uint64 vfs_ext4_now_sec(void);
+
 static int vfs_ext4_current_lock_tid(void)
 {
     struct proc *p = myproc();
@@ -87,6 +91,21 @@ static void vfs_ext4_os_unlock(void)
     release(&vfs_ext4_lock_state);
 
     releasesleep(&vfs_ext4_lock);
+}
+
+static void
+vfs_ext4_commit_file_time(struct file *f)
+{
+    uint64 now;
+
+    if (f == NULL || f->f_is_dir || !f->f_time_dirty)
+        return;
+
+    now = vfs_ext4_now_sec();
+    ext4_mtime_set(f->f_path, now);
+    ext4_ctime_set(f->f_path, now);
+    f->f_time_update_sec = now;
+    f->f_time_dirty = 0;
 }
 
 static const struct ext4_lock vfs_ext4_locks = {
@@ -315,36 +334,28 @@ vfs_ext4_read(struct file *f, int user_addr, const uint64 addr, int n)
     int status = 0;
     if (user_addr) 
     {
-        char *buf = kalloc();
-        /* 分配缓冲区失败 */
-        if (buf == NULL)
-            panic("Allocating one page failed.\n");
+        char buf[VFS_EXT4_IOBUF_SIZE];
     
         uint64 uaddr = addr, expect_read = 0, realread = 0;
         for (uint64 has_read = 0; has_read < n; 
             has_read += realread, uaddr += realread) 
         {
-            expect_read = min(n - has_read, PGSIZE);
+            expect_read = min(n - has_read, (uint64)VFS_EXT4_IOBUF_SIZE);
             realread = 0;
             status = ext4_fread(ext4_f, buf, expect_read, &realread);
             if (status != EOK) 
-            {
-                kfree(buf);
                 return 0;
-            }
             if (realread == 0) 
             {
                 break;
             }
             if (either_copyout(user_addr, uaddr, buf, realread) == -1) 
             {
-                kfree(buf);
                 printf("vfs_ext4_read: copyout failed\n");
                 return 0;
             }
             byteread += realread;
         }
-        kfree(buf);
     } 
     else 
     {
@@ -381,31 +392,24 @@ vfs_ext4_readat(struct file *f, int user_addr, const uint64 addr, int n, int off
         return -1;
     
     if (user_addr) {
-        char *buf = kalloc();
-        if (buf == NULL)
-            panic("Allocating one page failed.\n");
+        char buf[VFS_EXT4_IOBUF_SIZE];
         
         uint64 uaddr = addr, expect_read = 0, realread = 0;
         for (uint64 tot = 0; tot < n; tot += realread, uaddr += realread) {
-            expect_read = min(n - tot, PGSIZE);
+            expect_read = min(n - tot, (uint64)VFS_EXT4_IOBUF_SIZE);
             realread = 0;
             status = ext4_fread(ext4_f, buf, expect_read, &realread);
             if (status != EOK) 
-            {
-                kfree(buf);
                 return 0;
-            }
             if (realread == 0) 
                 break;
             if (either_copyout(user_addr, uaddr, buf, realread) == -1) 
             {
-                kfree(buf);
                 printf("vfs_ext4_read: copyout failed\n");
                 return 0;
             }
             byteread += realread;
         }
-        kfree(buf);
     } 
     else 
     {
@@ -442,33 +446,26 @@ vfs_ext4_write(struct file *f, int user_addr, const uint64 addr, int n)
     int status = 0;
     if (user_addr) 
     {
-        char *buf = kalloc();
-        if (buf == NULL)
-            panic("Allocating one page failed.\n");
+        char buf[VFS_EXT4_IOBUF_SIZE];
         
         uint64 uaddr = addr, expect = 0, real_write;
         for (uint64 has_write = 0; has_write < n; has_write += real_write, uaddr += real_write) 
         {
-            expect = min(n - has_write, PGSIZE);
+            expect = min(n - has_write, (uint64)VFS_EXT4_IOBUF_SIZE);
             real_write = 0;
             if (either_copyin((void *)buf, user_addr, (uint64)uaddr, expect) == -1) 
             {
-                kfree(buf);
-                printf("vfs_ext4_read: copyout failed\n");
+                printf("vfs_ext4_write: copyin failed\n");
                 return 0;
             }
             status = ext4_fwrite(ext4_f, buf, expect, &real_write);
             if (status != EOK) 
-            {
-                kfree(buf);
                 return 0;
-            }
             if (real_write == 0)
                 break;
             
             bytewrite += real_write;
         }
-        kfree(buf);
     } 
     else 
     {
@@ -479,15 +476,7 @@ vfs_ext4_write(struct file *f, int user_addr, const uint64 addr, int n)
     }
     f -> f_pos = ext4_f->fpos;
     if (bytewrite > 0)
-    {
-        uint64 now = vfs_ext4_now_sec();
-        if (f->f_time_update_sec != now)
-        {
-            ext4_mtime_set(f->f_path, now);
-            ext4_ctime_set(f->f_path, now);
-            f->f_time_update_sec = now;
-        }
-    }
+        f->f_time_dirty = 1;
     return bytewrite;
 }
 
@@ -565,7 +554,8 @@ vfs_ext4_fclose(struct file *f)
     struct ext4_file *file = (struct ext4_file *)f -> f_data.f_vnode.data;
     if (file == NULL)
         panic("Getting f's ext4 file failed.\n");
-    
+
+    vfs_ext4_commit_file_time(f);
     int status = ext4_fclose(file);
     if (status != EOK)
         return -1;
@@ -614,9 +604,12 @@ vfs_ext4_openat(struct file *f)
 {
     file_vnode_t *vnode = NULL;
     int status = 0;
+    f->f_is_dir = 0;
+    f->f_time_dirty = 0;
     
     if (vfs_ext4_is_dir(f->f_path) == 0) 
     {
+        f->f_is_dir = 1;
         vnode = vfs_alloc_dir();
         if (vnode == NULL)
             return -ENOMEM;
