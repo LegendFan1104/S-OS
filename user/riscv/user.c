@@ -480,7 +480,6 @@ static void cleanup_test_processes(const char *stage_name, const char *prefix)
         if (ret == -ECHILD)
             break;
     }
-    printf("%s CLEANUP %s DONE\n", prefix, stage_name);
 }
 
 void cleanup_test_round(const char *stage_name)
