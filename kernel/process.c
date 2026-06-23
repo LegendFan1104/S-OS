@@ -65,6 +65,8 @@ void proc_init(void)
         p->parent = 0;
         p->ktime = 0;
         p->utime = 0;
+        p->timer_elem.prev = NULL;
+        p->timer_elem.next = NULL;
         // 初始化文件描述符数组
         for (int i = 0; i < NOFILE; i++)
             p->ofile[i] = 0;
@@ -163,6 +165,8 @@ found:
     memset(&p->itimer, 0, sizeof(p->itimer));
     p->alarm_ticks = 0;
     p->timer_active = 0;
+    p->timer_elem.prev = NULL;
+    p->timer_elem.next = NULL;
     p->clear_child_tid = 0;
     p->ofn = (struct rlimit){NOFILE, NOFILE};
     // 初始化文件描述符数组
@@ -205,6 +209,7 @@ extern struct list free_thread; ///< 全局空闲线程链表
 static void freeproc(proc_t *p)
 {
     assert(holding(&p->lock), "caller must hold p->lock");
+    timer_cancel_process_alarm(p);
     
     if (debug_buddy)
     {
@@ -542,7 +547,7 @@ void sleep_on_chan(void *chan, struct spinlock *lk)
     /* Go to sleep. */
     p->chan = chan;
     p->state = SLEEPING;
-    p->main_thread->state = t_RUNNABLE;
+    p->main_thread->state = t_SLEEPING;
 
     sched();
 
@@ -568,6 +573,8 @@ void wakeup(void *chan)
             if (p->state == SLEEPING && p->chan == chan)
             {
                 p->state = RUNNABLE;
+                if (p->main_thread && p->main_thread->state == t_SLEEPING)
+                    p->main_thread->state = t_RUNNABLE;
             }
             release(&p->lock);
         }
@@ -1235,6 +1242,8 @@ int kill(int pid, int sig)
             if (p->state == SLEEPING)
             {
                 p->state = RUNNABLE;
+                if (p->main_thread && p->main_thread->state == t_SLEEPING)
+                    p->main_thread->state = t_RUNNABLE;
             }
             release(&p->lock);
             return 0;
@@ -1262,7 +1271,11 @@ int kill_all(int sig, proc_t *exclude)
                 p->killed = sig;
             }
             if (p->state == SLEEPING)
+            {
                 p->state = RUNNABLE;
+                if (p->main_thread && p->main_thread->state == t_SLEEPING)
+                    p->main_thread->state = t_RUNNABLE;
+            }
             matched = 1;
         }
         release(&p->lock);
@@ -1296,6 +1309,8 @@ int tgkill(int tgid, int tid, int sig)
                     if (p->state == SLEEPING)
                     {
                         p->state = RUNNABLE;
+                        if (p->main_thread && p->main_thread->state == t_SLEEPING)
+                            p->main_thread->state = t_RUNNABLE;
                     }
                     release(&p->lock);
                     return 0;

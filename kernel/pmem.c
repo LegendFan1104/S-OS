@@ -444,6 +444,14 @@ void buddy_free(void *ptr, int order)
             break;
         }
 
+        if (!list_elem_linked(&buddy_node->elem))
+        {
+            if (debug_buddy)
+                printf("buddy_free: buddy metadata says free, but elem is not linked: addr=%p order=%d\n",
+                       (void *)buddy_addr, merge_order);
+            break;
+        }
+
         if (debug_buddy)
             printf("buddy_free: merging with buddy at %p (order %d)\n",
                    (void *)buddy_addr, merge_order);

@@ -802,6 +802,9 @@ int devintr(void)
     /* 时钟中断 */
     else if (scause == 0x8000000000000005L)
     {
+#ifdef RISCV
+        set_next_timeout();
+#endif
         timer_tick();
         return 2;
     }
