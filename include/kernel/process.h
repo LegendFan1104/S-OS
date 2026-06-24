@@ -14,7 +14,7 @@
 #include "list.h"
 #include "resource.h"
 
-#define NPROC (128)
+#define NPROC (512)
 
 /* Cloning flags.  */
 #define CSIGNAL 0x000000ff

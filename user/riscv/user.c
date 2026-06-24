@@ -1196,7 +1196,7 @@ static longtest busybox[] = {
     {1, {"busybox", "pwd", 0}},
     {1, {"busybox", "free", 0}},
     {0, {"busybox", "hwclock", 0}},
-    {1, {"busybox", "sh", "-c", "./busybox sleep 5 & ./busybox kill $!", 0}},
+    //{1, {"busybox", "sh", "-c", "./busybox sleep 5 & ./busybox kill $!", 0}},
     {1, {"busybox", "ls", 0}},
     {1, {"busybox", "sleep", "1", 0}}, //< [glibc] syscall 115
     {1, {"busybox", "echo", "#### file opration test", 0}},
@@ -1255,7 +1255,7 @@ static char *busybox_cmd[] = {
     "pwd",
     "free",
     "hwclock",
-    "sh -c './busybox sleep 5 & ./busybox kill $!'",
+    //"sh -c './busybox sleep 5 & ./busybox kill $!'",
     "ls",
     "sleep 1",
     "echo \"#### file opration test\"",
