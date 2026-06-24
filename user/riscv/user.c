@@ -539,14 +539,14 @@ void run_selected_profile()
 
 void run_submit()
 {
-    // test_basic();
-    // test_busybox();
-    // test_lua();
-    // //test_sh();
-    // test_libc_all();
-    // test_libcbench();
-    // //test_iozone();
-    // cleanup_ltp_round("pre-ltp");
+    test_basic();
+    test_busybox();
+    test_lua();
+    //test_sh();
+    test_libc_all();
+    test_libcbench();
+    //test_iozone();
+    cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
     run_ltp_curated_profile("ltp-musl", ltp_submit_cases_musl_rv, ltp_submit_env_musl);
