@@ -31,7 +31,6 @@ static spinlock_t parent_lock; // 在涉及进程父子关系时使用
 extern thread_t threads[];
 
 pgtbl_t proc_pagetable(struct proc *p);
-static int reap_init_reparented_zombies(proc_t *reaper);
 
 void reg_info(void)
 {
@@ -64,7 +63,6 @@ void proc_init(void)
         // p->trapframe = (struct trapframe *)trapframe[p - pool];
         p->trapframe = 0;
         p->parent = 0;
-        p->reparented_to_init = 0;
         p->ktime = 0;
         p->utime = 0;
         // 初始化文件描述符数组
@@ -162,7 +160,6 @@ found:
     p->vma = NULL;
     p->killed = 0;
     p->term_signal = 0;
-    p->reparented_to_init = 0;
     memset(&p->itimer, 0, sizeof(p->itimer));
     p->alarm_ticks = 0;
     p->timer_active = 0;
@@ -294,34 +291,9 @@ static void freeproc(proc_t *p)
     p->exit_state = 0;
     p->killed = 0;
     p->term_signal = 0;
-    p->reparented_to_init = 0;
     
     if (debug_buddy)
         printf("freeproc: process %d freed successfully\n", (int)(p - pool));
-}
-
-static int reap_init_reparented_zombies(proc_t *reaper)
-{
-    proc_t *child;
-    int reaped = 0;
-
-    assert(holding(&reaper->lock), "caller must hold reaper lock");
-    for (child = pool; child < &pool[NPROC]; child++)
-    {
-        if (child->parent != reaper)
-            continue;
-
-        acquire(&child->lock);
-        if (child->parent == reaper &&
-            child->state == ZOMBIE &&
-            child->reparented_to_init)
-        {
-            freeproc(child);
-            reaped++;
-        }
-        release(&child->lock);
-    }
-    return reaped;
 }
 
 /**
@@ -630,7 +602,6 @@ void reparent(proc_t *p)
                 continue;
             }
             child->parent = initproc;
-            child->reparented_to_init = 1;
             release(&child->lock);
             wakeup(initproc);
         }
@@ -955,9 +926,6 @@ int wait(int pid, uint64 addr, int options)
     acquire(&p->lock); ///< 获取父进程锁，防止并发修改进程状态
     for (;;)
     {
-        if (p == initproc)
-            reap_init_reparented_zombies(p);
-
         havekids = 0;
         for (np = pool; np < &pool[NPROC]; np++)
         {
