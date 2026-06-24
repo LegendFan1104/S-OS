@@ -412,6 +412,44 @@ reject_path_write_on_ro_mount(const char *path)
     return 0;
 }
 
+static int
+sync_ext4_root(void)
+{
+    filesystem_t *fs = get_fs_by_type(EXT4);
+
+    if (fs == NULL)
+        return -ENOENT;
+    return vfs_ext4_flush(fs);
+}
+
+static int
+fsync_regular_ext4_file(struct file *f)
+{
+    if (f == NULL)
+        return -ENOENT;
+    if (f->f_type != FD_REG || f->f_data.f_vnode.fs == NULL)
+        return -EINVAL;
+    if (f->f_data.f_vnode.fs->type != EXT4)
+        return -ENOSYS;
+    return vfs_ext4_file_flush(f);
+}
+
+static int
+ftruncate_regular_ext4_file(struct file *f, uint64 len)
+{
+    if (f == NULL)
+        return -ENOENT;
+    if (f->f_type != FD_REG || f->f_data.f_vnode.fs == NULL)
+        return -EINVAL;
+    if (f->f_data.f_vnode.fs->type != EXT4)
+        return -ENOSYS;
+    if ((f->f_flags & 0x3) == O_RDONLY)
+        return -EINVAL;
+    if (reject_path_write_on_ro_mount(f->f_path) < 0)
+        return -EROFS;
+    return vfs_ext4_ftruncate(f, len);
+}
+
 static void
 parent_dir_from_path(const char *path, char *parent)
 {
@@ -695,6 +733,34 @@ uint64 sys_fchownat(int dirfd, const char *upath, int owner, int group, int flag
     dirpath = (dirfd == AT_FDCWD) ? myproc()->cwd.path : myproc()->ofile[dirfd]->f_path;
     get_absolute_path(path, dirpath, absolute_path);
     return 0;
+}
+
+uint64 sys_sync(void)
+{
+    return sync_ext4_root();
+}
+
+uint64 sys_ftruncate(int fd, uint64 len)
+{
+    struct file *f;
+
+    if (fd < 0 || fd >= NOFILE || (f = myproc()->ofile[fd]) == 0)
+        return -ENOENT;
+    return ftruncate_regular_ext4_file(f, len);
+}
+
+uint64 sys_fsync(int fd)
+{
+    struct file *f;
+
+    if (fd < 0 || fd >= NOFILE || (f = myproc()->ofile[fd]) == 0)
+        return -ENOENT;
+    return fsync_regular_ext4_file(f);
+}
+
+uint64 sys_fdatasync(int fd)
+{
+    return sys_fsync(fd);
 }
 
 /**
@@ -1052,11 +1118,8 @@ int sleep(timespec_t *req, timespec_t *rem)
     acquire(&tickslock);
     while ((now_ns = r_time() * 1000000000ULL / CLK_FREQ) < deadline_ns)
     {
-        unsigned long pending = p->sig_pending.__val[0] & ~p->sig_set.__val[0];
-
-        if (p->killed || pending)
+        if (p->killed)
         {
-            p->sig_pending.__val[0] &= ~pending;
             release(&tickslock);
             if (rem)
             {
@@ -1139,7 +1202,6 @@ static int sys_settimer_impl(int which, uint64 new_value, uint64 old_value)
         if (new_timer.it_value.usec >= 1000000 || new_timer.it_interval.usec >= 1000000)
             return -EINVAL;
 
-        push_off();
         p->itimer = new_timer;
         value_ticks = new_timer.it_value.sec * CLK_FREQ +
                       new_timer.it_value.usec * (CLK_FREQ / 1000000);
@@ -1153,8 +1215,6 @@ static int sys_settimer_impl(int which, uint64 new_value, uint64 old_value)
             p->timer_active = 1;
             p->alarm_ticks = now + value_ticks;
         }
-        timer_sync_process_alarm(p);
-        pop_off();
     }
 
     return 0;
@@ -3335,7 +3395,7 @@ alloc_connected_socket_fd(struct socket *listener, struct sockaddr_in *remote_ad
     sock = kalloc();
     if (!sock)
     {
-        get_file_ops()->close(f);
+        f->f_count = 0;
         return -ENOMEM;
     }
 
@@ -3354,7 +3414,7 @@ alloc_connected_socket_fd(struct socket *listener, struct sockaddr_in *remote_ad
     fd = fdalloc(f);
     if (fd < 0)
     {
-        get_file_ops()->close(f);
+        f->f_count = 0;
         return -EMFILE;
     }
     return fd;
@@ -4512,16 +4572,16 @@ void syscall(struct trapframe *trapframe)
         ret = 0;
         break;
     case SYS_sync:
-        ret = 0;
+        ret = sys_sync();
         break;
     case SYS_ftruncate:
-        ret = 0;
+        ret = sys_ftruncate((int)a[0], (uint64)a[1]);
         break;
     case SYS_fsync:
-        ret = 0;
+        ret = sys_fsync((int)a[0]);
         break;
     case SYS_fdatasync:
-        ret = 0;
+        ret = sys_fdatasync((int)a[0]);
         break;
     case SYS_getrusage:
         ret = sys_getrusage((int)a[0], (uint64)a[1]);
