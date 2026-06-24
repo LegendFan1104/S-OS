@@ -25,9 +25,9 @@ extern int get_time(void){
 
 int sleep(unsigned long long time)
 {
-    timespec_t tv = {.tv_sec = time, .tv_nsec = 0};
+    timeval_t  tv = {.sec = time, .usec = 0};
     if (sys_nanosleep(&tv, &tv))
-        return tv.tv_sec;
+        return tv.sec;
     return 0;
 }
 
