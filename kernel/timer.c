@@ -18,7 +18,6 @@ extern proc_t pool[NPROC];
 
 struct spinlock tickslock;
 uint ticks;
-static struct list timer_active_list;
 
 static uint64 timeval_to_clocks(const struct timeval *tv)
 {
@@ -33,12 +32,6 @@ static void refresh_process_timer(proc_t *p, uint64 now)
         return;
 
     p->sig_pending.__val[0] |= (1UL << SIGALRM);
-    if (p->state == SLEEPING)
-    {
-        p->state = RUNNABLE;
-        if (p->main_thread && p->main_thread->state == t_SLEEPING)
-            p->main_thread->state = t_RUNNABLE;
-    }
 
     interval = timeval_to_clocks(&p->itimer.it_interval);
     if (interval == 0)
@@ -46,8 +39,6 @@ static void refresh_process_timer(proc_t *p, uint64 now)
         p->timer_active = 0;
         p->alarm_ticks = 0;
         memset(&p->itimer.it_value, 0, sizeof(p->itimer.it_value));
-        if (list_elem_linked(&p->timer_elem))
-            list_remove(&p->timer_elem);
         return;
     }
 
@@ -55,37 +46,6 @@ static void refresh_process_timer(proc_t *p, uint64 now)
     {
         p->alarm_ticks += interval;
     } while (p->alarm_ticks <= now);
-}
-
-void
-timer_sync_process_alarm(proc_t *p)
-{
-    if (p == NULL)
-        return;
-
-    push_off();
-    if (p->timer_active)
-    {
-        if (!list_elem_linked(&p->timer_elem))
-            list_push_back(&timer_active_list, &p->timer_elem);
-    }
-    else if (list_elem_linked(&p->timer_elem))
-    {
-        list_remove(&p->timer_elem);
-    }
-    pop_off();
-}
-
-void
-timer_cancel_process_alarm(proc_t *p)
-{
-    if (p == NULL)
-        return;
-
-    push_off();
-    if (list_elem_linked(&p->timer_elem))
-        list_remove(&p->timer_elem);
-    pop_off();
 }
 
 #define GOLDFISH_RTC_BASE 0x101000UL
@@ -135,7 +95,6 @@ void
 timer_init(void) 
 {
     initlock(&tickslock, "time");
-    list_init(&timer_active_list);
 
     ticks = 0;
     boot_time = sanitize_boot_time(read_rtc_seconds());
@@ -214,8 +173,6 @@ countdown_timer_init(void)
 void 
 timer_tick(void) 
 {
-    struct list_elem *e;
-    uint64 now;
 #if DEBUG
     printf("timer tick\n");
 #endif
@@ -223,14 +180,17 @@ timer_tick(void)
     ticks++;
     wakeup(&ticks);
     release(&tickslock);
-    now = r_time();
-    for (e = list_begin(&timer_active_list); e != list_end(&timer_active_list); )
+    uint64 now = r_time();
+    for (proc_t *p = pool; p < pool + NPROC; p++)
     {
-        proc_t *p = list_entry(e, proc_t, timer_elem);
-        e = list_next(e);
+        acquire(&p->lock);
         if (p->state != UNUSED)
             refresh_process_timer(p, now);
+        release(&p->lock);
     }
+#ifdef RISCV
+    set_next_timeout();
+#endif
 }
 
 /**

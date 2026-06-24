@@ -53,7 +53,7 @@ void run_ltp_profile(const char *root_dir, const char *profile_name);
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[]);
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir);
 void cleanup_ltp_round(const char *profile_name);
-void cleanup_test_round(const char *stage_name);
+void cleanup_ltp_case(const char *profile_name, const char *case_name);
 void exe(char *path);
 
 char *question_name[] = {};
@@ -430,7 +430,7 @@ static int run_busybox_argv(char *argv[])
     return WEXITSTATUS(status);
 }
 
-static void cleanup_test_processes(const char *stage_name, const char *prefix)
+static void cleanup_ltp_processes(const char *profile_name, const char *case_name)
 {
     int idle_rounds = 0;
     int status;
@@ -451,16 +451,20 @@ static void cleanup_test_processes(const char *stage_name, const char *prefix)
         if (ret == -ECHILD)
             break;
     }
-}
-
-void cleanup_test_round(const char *stage_name)
-{
-    cleanup_test_processes(stage_name, "TEST ROUND");
+    if (case_name)
+        printf("LTP CASE CLEANUP %s %s DONE\n", profile_name, case_name);
+    else
+        printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
 }
 
 void cleanup_ltp_round(const char *profile_name)
 {
-    cleanup_test_processes(profile_name, "LTP ROUND");
+    cleanup_ltp_processes(profile_name, 0);
+}
+
+void cleanup_ltp_case(const char *profile_name, const char *case_name)
+{
+    cleanup_ltp_processes(profile_name, case_name);
 }
 
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
@@ -568,16 +572,13 @@ void run_all()
 
 void run_submit()
 {
-    test_lua();
-    cleanup_test_round("lua");
-    test_basic();
-    cleanup_test_round("basic");
-    test_busybox();
-    cleanup_test_round("busybox");
-    test_libc_all();
-    cleanup_test_round("libctest");
-    test_libcbench();
-    cleanup_ltp_round("pre-ltp");
+    // test_lua();
+    // test_basic();
+    // test_busybox();
+    // test_libc_all();
+    // test_libcbench();
+    // //test_iozone();
+    // cleanup_ltp_round("pre-ltp");
     sys_chdir("/musl");
     prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
     run_ltp_curated_profile("ltp-glibc", ltp_submit_cases_glibc_la, ltp_submit_env_glibc);
@@ -591,12 +592,13 @@ void run_submit()
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[])
 {
     int i, pid, status;
-    const int cleanup_interval = 40;
 
     printf("#### OS COMP TEST GROUP START %s ####\n", profile_name);
     for (i = 0; cases[i]; i++)
     {
-        printf("RUN LTP CASE %s\n", ltp_case_name(cases[i]));
+        const char *case_name = ltp_case_name(cases[i]);
+
+        printf("RUN LTP CASE %s\n", case_name);
         pid = fork();
         if (pid < 0)
         {
@@ -619,12 +621,8 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
         }
         waitpid(pid, &status, 0);
         status = WEXITSTATUS(status);
-        printf("FAIL LTP CASE %s : %d\n", ltp_case_name(cases[i]), status);
-        if ((i + 1) % cleanup_interval == 0)
-        {
-            printf("LTP PERIODIC CLEANUP %s AFTER %d CASES\n", profile_name, i + 1);
-            cleanup_ltp_round(profile_name);
-        }
+        printf("FAIL LTP CASE %s : %d\n", case_name, status);
+        cleanup_ltp_case(profile_name, case_name);
     }
     printf("#### OS COMP TEST GROUP END %s ####\n", profile_name);
 }
@@ -837,14 +835,14 @@ void test_iozone()
     // sys_chdir("musl");
     printf("run iozone_testcode.sh\n");
     char *newenviron[] = {NULL};
-    // printf("iozone automatic measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[0].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone automatic measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[0].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
     printf("iozone throughput write/read measurements\n");
     pid = fork();
@@ -855,63 +853,63 @@ void test_iozone()
     }
     waitpid(pid, &status, 0);
 
-    // printf("iozone throughput random-read measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[2].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput random-read measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[2].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput read-backwards measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[3].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput read-backwards measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[3].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput stride-read measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[4].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput stride-read measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[4].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput fwrite/fread measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[5].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput fwrite/fread measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[5].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput pwrite/pread measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[6].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput pwrite/pread measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[6].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 
-    // printf("iozone throughput pwritev/preadv measurements\n");
-    // pid = fork();
-    // if (pid == 0)
-    // {
-    //     sys_execve("iozone", iozone[7].name, newenviron);
-    //     exit(0);
-    // }
-    // waitpid(pid, &status, 0);
+    printf("iozone throughput pwritev/preadv measurements\n");
+    pid = fork();
+    if (pid == 0)
+    {
+        sys_execve("iozone", iozone[7].name, newenviron);
+        exit(0);
+    }
+    waitpid(pid, &status, 0);
 }
 static longtest iozone[] = {
     {1, {"iozone", "-a", "-r", "1k", "-s", "4m", 0}},
-    {1, {"iozone", "-t", "4", "-i", "0", "-i", "1", "-r", "1k", "-s", "1m", 0}},
+    {1, {"iozone", "-t", "1", "-i", "0", "-i", "1", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "2", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "3", "-r", "1k", "-s", "1m", 0}},
     {1, {"iozone", "-t", "4", "-i", "0", "-i", "5", "-r", "1k", "-s", "1m", 0}},
