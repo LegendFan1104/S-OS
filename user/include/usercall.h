@@ -37,4 +37,8 @@ extern int umount (const char *special) __attribute__((section(".text.syscall_fu
 extern int sys_unlinkat(int dirfd, char *path, unsigned int flags) __attribute__((section(".text.syscall_function")));
 extern void shutdown(void) __attribute__((section(".text.syscall_function")));
 extern uint64 sys_readv(int fd, const struct iovec *iov, int iovcnt) __attribute__((section(".text.syscall_function")));
+extern int sync(void) __attribute__((section(".text.syscall_function")));
+extern int ftruncate(int fd, uint64 len) __attribute__((section(".text.syscall_function")));
+extern int fsync(int fd) __attribute__((section(".text.syscall_function")));
+extern int fdatasync(int fd) __attribute__((section(".text.syscall_function")));
 #endif
