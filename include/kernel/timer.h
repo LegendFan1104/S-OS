@@ -9,13 +9,17 @@
 #include "loongarch.h"
 #endif
 
-/* 不知道为什么华科时钟频率定成这样的 */
-#define FREQUENCY 10000000L // qemu时钟频率12500000
+#define DEFAULT_CLK_FREQ 100000000UL
+
+#define TICK_HZ 10UL
+extern uint64 timer_freq;
+extern uint64 timer_interval;
+
+#define CLK_FREQ (timer_freq)
+#define FREQUENCY CLK_FREQ
 #define TIME2NS(time) (time * 1000 * 1000 * 1000 / FREQUENCY)
 #define TIMESEPC2NS(sepc) (sepc.tv_nsec + sepc.tv_sec * 1000 * 1000 * 1000)
-
-#define CLK_FREQ 10000000ul
-#define INTERVAL (CLK_FREQ / 1) ///< 0.1s
+#define INTERVAL (timer_interval) ///< scheduler tick interval, 0.1s
 
 extern struct spinlock tickslock;
 extern uint ticks;

@@ -18,6 +18,23 @@ extern proc_t pool[NPROC];
 
 struct spinlock tickslock;
 uint ticks;
+uint64 timer_freq = DEFAULT_CLK_FREQ;
+uint64 timer_interval = DEFAULT_CLK_FREQ / TICK_HZ;
+
+static inline uint64 clocks_to_sec(uint64 clk)
+{
+    return clk / CLK_FREQ;
+}
+
+static inline uint64 clocks_to_usec_rem(uint64 clk)
+{
+    return (clk % CLK_FREQ) * 1000000ULL / CLK_FREQ;
+}
+
+static inline uint64 clocks_to_nsec_rem(uint64 clk)
+{
+    return (clk % CLK_FREQ) * 1000000000ULL / CLK_FREQ;
+}
 
 static uint64 timeval_to_clocks(const struct timeval *tv)
 {
@@ -81,6 +98,50 @@ sanitize_boot_time(uint64 rtc_sec)
     return rtc_sec;
 }
 
+static uint64
+wait_rtc_second_change(uint64 prev, uint64 max_poll)
+{
+    while (max_poll-- > 0)
+    {
+        uint64 now = read_rtc_seconds();
+        if (now != prev)
+            return now;
+    }
+    return prev;
+}
+
+static uint64
+sanitize_timer_freq(uint64 freq)
+{
+    if (freq < 1000000ULL || freq > 1000000000ULL)
+        return DEFAULT_CLK_FREQ;
+    return freq;
+}
+
+static uint64
+calibrate_timer_freq_from_rtc(void)
+{
+    uint64 sec0, sec1;
+    uint64 t0, t1;
+
+    sec0 = read_rtc_seconds();
+    sec1 = wait_rtc_second_change(sec0, 50000000ULL);
+    if (sec1 == sec0)
+        return 0;
+    t0 = r_time();
+
+    sec0 = sec1;
+    sec1 = wait_rtc_second_change(sec0, 50000000ULL);
+    if (sec1 == sec0)
+        return 0;
+    t1 = r_time();
+
+    if (t1 <= t0)
+        return 0;
+
+    return t1 - t0;
+}
+
 uint64 boot_time = 0;
 
 #if defined SBI
@@ -94,10 +155,21 @@ extern void set_timer(uint64 stime); //< 通过sbi设置下一个时钟中断
 void 
 timer_init(void) 
 {
+    uint64 calibrated_freq;
+
     initlock(&tickslock, "time");
 
     ticks = 0;
     boot_time = sanitize_boot_time(read_rtc_seconds());
+    calibrated_freq = calibrate_timer_freq_from_rtc();
+    if (calibrated_freq)
+        timer_freq = sanitize_timer_freq(calibrated_freq);
+    else
+        timer_freq = DEFAULT_CLK_FREQ;
+    timer_interval = timer_freq / TICK_HZ;
+    if (timer_interval == 0)
+        timer_interval = 1;
+    printf("timer_freq = %lu Hz, timer_interval = %lu\n", timer_freq, timer_interval);
 #ifdef RISCV
     #if defined SBI //< 使用sbi
     w_sie(r_sie() | SIE_STIE); //< 虽然start已经设置了SIE_STIE,这里再设置一次
@@ -227,26 +299,17 @@ get_times(uint64 utms)
 timeval_t timer_get_time(){
     timeval_t tv;
     uint64 clk = r_time();
-#ifdef RISCV
-    tv.sec = boot_time + clk / CLK_FREQ;
-    tv.usec = (clk % CLK_FREQ) * 1000000 / CLK_FREQ;
-#else
-    uint64 base = (uint64)CLK_FREQ * 10;
-    tv.sec = boot_time + clk / base;
-    tv.usec = (clk % base) * 1000000 / base;
-#endif
+
+    tv.sec = boot_time + clocks_to_sec(clk);
+    tv.usec = clocks_to_usec_rem(clk);
     return tv;
 }
 timespec_t timer_get_ntime() {
     timespec_t ts;
-    uint64 clk = r_time();  // 获取当前时钟周期计数
-    
-    // 计算总秒数 (启动时间 + 运行时间)
-    ts.tv_sec = boot_time + clk / CLK_FREQ;
-    
-    // 计算纳秒部分: (剩余时钟周期数 * 10^9) / 时钟频率
-    uint64 remainder = clk % CLK_FREQ;
-    ts.tv_nsec = (remainder * 1000000000ULL) / CLK_FREQ;
+    uint64 clk = r_time();
+
+    ts.tv_sec = boot_time + clocks_to_sec(clk);
+    ts.tv_nsec = clocks_to_nsec_rem(clk);
     
     return ts;
 }
