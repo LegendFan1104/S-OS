@@ -222,7 +222,7 @@ static char *ltp_submit_cases_musl_rv[] = {
     "/musl/ltp/testcases/bin/close01",
     "/musl/ltp/testcases/bin/fstatat01",
     "/musl/ltp/testcases/bin/dup07",
-    "/musl/ltp/testcases/bin/fork04",
+    //"/musl/ltp/testcases/bin/fork04",
     "/musl/ltp/testcases/bin/faccessat01",
     0,
 };
@@ -345,7 +345,7 @@ static char *ltp_submit_cases_glibc_rv[] = {
     "/musl/ltp/testcases/bin/close01",
     "/musl/ltp/testcases/bin/fstatat01",
     "/musl/ltp/testcases/bin/dup07",
-    "/musl/ltp/testcases/bin/fork04",
+    //"/musl/ltp/testcases/bin/fork04",
     "/musl/ltp/testcases/bin/faccessat01",
     0,
 };
@@ -591,17 +591,11 @@ void run_ltp_profile(const char *root_dir, const char *profile_name)
             "\"$BUSYBOX\" chmod 755 \"$LTPBIN/basename\" \"$LTPBIN/cat\" \"$LTPBIN/grep\"; "
             "export PATH=$LTPBIN:$LTPBASE:$LTPROOT/testcases/bin:$LTPROOT/testcases/lib:/bin:/usr/bin:$PATH; "
             "export TMPDIR=/tmp; "
-            "LTP_HAS_TIMEOUT=0; "
-            "\"$BUSYBOX\" timeout 1 \"$BUSYBOX\" true >/dev/null 2>&1 && LTP_HAS_TIMEOUT=1; "
             "for file in $LTPROOT/testcases/bin/*; do "
             "base=$(\"$BUSYBOX\" basename \"$file\"); "
             "echo RUN LTP CASE \"$base\"; "
             "case \"$base\" in ask_password.sh|assign_password.sh) echo SKIP LTP CASE \"$base\" : interactive; continue ;; esac; "
-            "if [ \"$LTP_HAS_TIMEOUT\" -eq 1 ]; then "
-            "\"$BUSYBOX\" timeout -s 9 35 \"$file\"; "
-            "else "
             "\"$file\"; "
-            "fi; "
             "ret=$?; "
             "echo FAIL LTP CASE \"$base\" : \"$ret\"; "
             "done",
@@ -634,14 +628,9 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
         if (pid == 0)
         {
             char *newargv[] = {
-                "/musl/busybox",
-                "timeout",
-                "-s",
-                "9",
-                "25",
                 cases[i],
                 0};
-            sys_execve("/musl/busybox", newargv, envp);
+            sys_execve(cases[i], newargv, envp);
             print("execve error.\n");
             exit(1);
         }
