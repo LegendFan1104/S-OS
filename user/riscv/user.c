@@ -230,123 +230,123 @@ static char *ltp_submit_cases_musl_rv[] = {
 static char *ltp_submit_cases_glibc_rv[] = {
     // Front-load high-yield cases and keep accept03 out of the hot path,
     // because the RV glibc score group has been crashing immediately after it.
-    "/musl/ltp/testcases/bin/epoll_ctl03",
-    "/musl/ltp/testcases/bin/write02",
-    "/musl/ltp/testcases/bin/access01",
-    "/musl/ltp/testcases/bin/waitpid04",
-    "/musl/ltp/testcases/bin/rt_sigaction01",
-    "/musl/ltp/testcases/bin/uname01",
-    "/musl/ltp/testcases/bin/getpid01",
-    "/musl/ltp/testcases/bin/time01",
-    "/musl/ltp/testcases/bin/waitpid01",
-    "/musl/ltp/testcases/bin/symlink04",
-    "/musl/ltp/testcases/bin/clock_getres01",
-    "/musl/ltp/testcases/bin/stream03",
-    "/musl/ltp/testcases/bin/sysconf01",
-    "/musl/ltp/testcases/bin/stat02_64",
-    "/musl/ltp/testcases/bin/confstr01",
-    "/musl/ltp/testcases/bin/stat02",
-    "/musl/ltp/testcases/bin/signal03",
-    "/musl/ltp/testcases/bin/sigaltstack02",
-    "/musl/ltp/testcases/bin/getitimer01",
-    "/musl/ltp/testcases/bin/setpgrp02",
-    "/musl/ltp/testcases/bin/signal04",
-    "/musl/ltp/testcases/bin/setpgid02",
-    "/musl/ltp/testcases/bin/chmod01",
-    "/musl/ltp/testcases/bin/setpgid01",
-    "/musl/ltp/testcases/bin/madvise01",
-    "/musl/ltp/testcases/bin/setgid03",
-    "/musl/ltp/testcases/bin/pathconf01",
-    "/musl/ltp/testcases/bin/readlink01",
-    "/musl/ltp/testcases/bin/getrlimit01",
-    "/musl/ltp/testcases/bin/nftw6401",
-    "/musl/ltp/testcases/bin/llseek03",
-    "/musl/ltp/testcases/bin/nftw01",
-    "/musl/ltp/testcases/bin/madvise10",
-    "/musl/ltp/testcases/bin/mkdirat02",
-    "/musl/ltp/testcases/bin/readlinkat01",
-    "/musl/ltp/testcases/bin/memcpy01",
-    "/musl/ltp/testcases/bin/stat01",
-    "/musl/ltp/testcases/bin/memcmp01",
-    "/musl/ltp/testcases/bin/stat01_64",
-    "/musl/ltp/testcases/bin/lseek07",
-    "/musl/ltp/testcases/bin/fpathconf01",
-    "/musl/ltp/testcases/bin/kill03",
-    "/musl/ltp/testcases/bin/access03",
-    "/musl/ltp/testcases/bin/inode01",
-    "/musl/ltp/testcases/bin/getpgid01",
-    "/musl/ltp/testcases/bin/getuid03",
-    "/musl/ltp/testcases/bin/accept03",
-    "/musl/ltp/testcases/bin/gettid01",
-    "/musl/ltp/testcases/bin/access02",
-    "/musl/ltp/testcases/bin/getrusage01",
-    "/musl/ltp/testcases/bin/alarm02",
-    "/musl/ltp/testcases/bin/getpid02",
-    "/musl/ltp/testcases/bin/chown05",
-    "/musl/ltp/testcases/bin/getpgrp01",
-    "/musl/ltp/testcases/bin/dup202",
-    "/musl/ltp/testcases/bin/getpgid02",
-    "/musl/ltp/testcases/bin/fchown05",
-    "/musl/ltp/testcases/bin/geteuid02",
-    "/musl/ltp/testcases/bin/fcntl02",
-    "/musl/ltp/testcases/bin/getcwd01",
-    "/musl/ltp/testcases/bin/fcntl02_64",
-    "/musl/ltp/testcases/bin/fork10",
-    "/musl/ltp/testcases/bin/futex_wake01",
-    "/musl/ltp/testcases/bin/fchown02",
-    "/musl/ltp/testcases/bin/setregid02",
-    "/musl/ltp/testcases/bin/eventfd2_02",
-    "/musl/ltp/testcases/bin/accept01",
-    "/musl/ltp/testcases/bin/epoll_wait07",
-    "/musl/ltp/testcases/bin/creat01",
-    "/musl/ltp/testcases/bin/epoll_ctl02",
-    "/musl/ltp/testcases/bin/fchmod01",
-    "/musl/ltp/testcases/bin/epoll_create01",
-    "/musl/ltp/testcases/bin/fcntl05",
-    "/musl/ltp/testcases/bin/dup207",
-    "/musl/ltp/testcases/bin/fcntl05_64",
-    "/musl/ltp/testcases/bin/dup203",
-    "/musl/ltp/testcases/bin/mem02",
-    "/musl/ltp/testcases/bin/dup04",
-    "/musl/ltp/testcases/bin/statx02",
-    "/musl/ltp/testcases/bin/dup01",
-    "/musl/ltp/testcases/bin/stream05",
-    "/musl/ltp/testcases/bin/chown02",
-    "/musl/ltp/testcases/bin/access04",
-    "/musl/ltp/testcases/bin/alarm03",
-    "/musl/ltp/testcases/bin/epoll_wait03",
-    "/musl/ltp/testcases/bin/utime07",
-    "/musl/ltp/testcases/bin/fcntl09",
-    "/musl/ltp/testcases/bin/ulimit01",
-    "/musl/ltp/testcases/bin/fcntl09_64",
-    "/musl/ltp/testcases/bin/syscall01",
-    "/musl/ltp/testcases/bin/fcntl10",
-    "/musl/ltp/testcases/bin/sigwaitinfo01",
-    "/musl/ltp/testcases/bin/fcntl10_64",
-    "/musl/ltp/testcases/bin/sigtimedwait01",
-    "/musl/ltp/testcases/bin/getrandom01",
-    "/musl/ltp/testcases/bin/shmctl07",
-    "/musl/ltp/testcases/bin/getrandom02",
-    "/musl/ltp/testcases/bin/setrlimit01",
-    "/musl/ltp/testcases/bin/ioctl_ns07",
-    "/musl/ltp/testcases/bin/readlinkat02",
-    "/musl/ltp/testcases/bin/lseek01",
-    "/musl/ltp/testcases/bin/nextafter01",
-    "/musl/ltp/testcases/bin/mkdirat01",
-    "/musl/ltp/testcases/bin/nanosleep04",
-    "/musl/ltp/testcases/bin/pipe2_01",
-    "/musl/ltp/testcases/bin/mmap09",
-    "/musl/ltp/testcases/bin/shmctl08",
-    "/musl/ltp/testcases/bin/getitimer02",
-    "/musl/ltp/testcases/bin/abs01",
-    "/musl/ltp/testcases/bin/getgroups01",
-    "/musl/ltp/testcases/bin/atof01",
-    "/musl/ltp/testcases/bin/getdents02",
-    "/musl/ltp/testcases/bin/close01",
-    "/musl/ltp/testcases/bin/fstatat01",
-    "/musl/ltp/testcases/bin/dup07",
-    //"/musl/ltp/testcases/bin/fork04",
-    "/musl/ltp/testcases/bin/faccessat01",
+    "/glibc/ltp/testcases/bin/epoll_ctl03",
+    "/glibc/ltp/testcases/bin/write02",
+    "/glibc/ltp/testcases/bin/access01",
+    "/glibc/ltp/testcases/bin/waitpid04",
+    "/glibc/ltp/testcases/bin/rt_sigaction01",
+    "/glibc/ltp/testcases/bin/uname01",
+    "/glibc/ltp/testcases/bin/getpid01",
+    "/glibc/ltp/testcases/bin/time01",
+    "/glibc/ltp/testcases/bin/waitpid01",
+    "/glibc/ltp/testcases/bin/symlink04",
+    "/glibc/ltp/testcases/bin/clock_getres01",
+    "/glibc/ltp/testcases/bin/stream03",
+    "/glibc/ltp/testcases/bin/sysconf01",
+    "/glibc/ltp/testcases/bin/stat02_64",
+    "/glibc/ltp/testcases/bin/confstr01",
+    "/glibc/ltp/testcases/bin/stat02",
+    "/glibc/ltp/testcases/bin/signal03",
+    "/glibc/ltp/testcases/bin/sigaltstack02",
+    "/glibc/ltp/testcases/bin/getitimer01",
+    "/glibc/ltp/testcases/bin/setpgrp02",
+    "/glibc/ltp/testcases/bin/signal04",
+    "/glibc/ltp/testcases/bin/setpgid02",
+    "/glibc/ltp/testcases/bin/chmod01",
+    "/glibc/ltp/testcases/bin/setpgid01",
+    "/glibc/ltp/testcases/bin/madvise01",
+    "/glibc/ltp/testcases/bin/setgid03",
+    "/glibc/ltp/testcases/bin/pathconf01",
+    "/glibc/ltp/testcases/bin/readlink01",
+    "/glibc/ltp/testcases/bin/getrlimit01",
+    "/glibc/ltp/testcases/bin/nftw6401",
+    "/glibc/ltp/testcases/bin/llseek03",
+    "/glibc/ltp/testcases/bin/nftw01",
+    "/glibc/ltp/testcases/bin/madvise10",
+    "/glibc/ltp/testcases/bin/mkdirat02",
+    "/glibc/ltp/testcases/bin/readlinkat01",
+    "/glibc/ltp/testcases/bin/memcpy01",
+    "/glibc/ltp/testcases/bin/stat01",
+    "/glibc/ltp/testcases/bin/memcmp01",
+    "/glibc/ltp/testcases/bin/stat01_64",
+    "/glibc/ltp/testcases/bin/lseek07",
+    "/glibc/ltp/testcases/bin/fpathconf01",
+    "/glibc/ltp/testcases/bin/kill03",
+    "/glibc/ltp/testcases/bin/access03",
+    "/glibc/ltp/testcases/bin/inode01",
+    "/glibc/ltp/testcases/bin/getpgid01",
+    "/glibc/ltp/testcases/bin/getuid03",
+    "/glibc/ltp/testcases/bin/accept03",
+    "/glibc/ltp/testcases/bin/gettid01",
+    "/glibc/ltp/testcases/bin/access02",
+    "/glibc/ltp/testcases/bin/getrusage01",
+    "/glibc/ltp/testcases/bin/alarm02",
+    "/glibc/ltp/testcases/bin/getpid02",
+    "/glibc/ltp/testcases/bin/chown05",
+    "/glibc/ltp/testcases/bin/getpgrp01",
+    "/glibc/ltp/testcases/bin/dup202",
+    "/glibc/ltp/testcases/bin/getpgid02",
+    "/glibc/ltp/testcases/bin/fchown05",
+    "/glibc/ltp/testcases/bin/geteuid02",
+    "/glibc/ltp/testcases/bin/fcntl02",
+    "/glibc/ltp/testcases/bin/getcwd01",
+    "/glibc/ltp/testcases/bin/fcntl02_64",
+    "/glibc/ltp/testcases/bin/fork10",
+    "/glibc/ltp/testcases/bin/futex_wake01",
+    "/glibc/ltp/testcases/bin/fchown02",
+    "/glibc/ltp/testcases/bin/setregid02",
+    "/glibc/ltp/testcases/bin/eventfd2_02",
+    "/glibc/ltp/testcases/bin/accept01",
+    "/glibc/ltp/testcases/bin/epoll_wait07",
+    "/glibc/ltp/testcases/bin/creat01",
+    "/glibc/ltp/testcases/bin/epoll_ctl02",
+    "/glibc/ltp/testcases/bin/fchmod01",
+    "/glibc/ltp/testcases/bin/epoll_create01",
+    "/glibc/ltp/testcases/bin/fcntl05",
+    "/glibc/ltp/testcases/bin/dup207",
+    "/glibc/ltp/testcases/bin/fcntl05_64",
+    "/glibc/ltp/testcases/bin/dup203",
+    "/glibc/ltp/testcases/bin/mem02",
+    "/glibc/ltp/testcases/bin/dup04",
+    "/glibc/ltp/testcases/bin/statx02",
+    "/glibc/ltp/testcases/bin/dup01",
+    "/glibc/ltp/testcases/bin/stream05",
+    "/glibc/ltp/testcases/bin/chown02",
+    "/glibc/ltp/testcases/bin/access04",
+    "/glibc/ltp/testcases/bin/alarm03",
+    "/glibc/ltp/testcases/bin/epoll_wait03",
+    "/glibc/ltp/testcases/bin/utime07",
+    "/glibc/ltp/testcases/bin/fcntl09",
+    "/glibc/ltp/testcases/bin/ulimit01",
+    "/glibc/ltp/testcases/bin/fcntl09_64",
+    "/glibc/ltp/testcases/bin/syscall01",
+    "/glibc/ltp/testcases/bin/fcntl10",
+    "/glibc/ltp/testcases/bin/sigwaitinfo01",
+    "/glibc/ltp/testcases/bin/fcntl10_64",
+    "/glibc/ltp/testcases/bin/sigtimedwait01",
+    "/glibc/ltp/testcases/bin/getrandom01",
+    "/glibc/ltp/testcases/bin/shmctl07",
+    "/glibc/ltp/testcases/bin/getrandom02",
+    "/glibc/ltp/testcases/bin/setrlimit01",
+    "/glibc/ltp/testcases/bin/ioctl_ns07",
+    "/glibc/ltp/testcases/bin/readlinkat02",
+    "/glibc/ltp/testcases/bin/lseek01",
+    "/glibc/ltp/testcases/bin/nextafter01",
+    "/glibc/ltp/testcases/bin/mkdirat01",
+    "/glibc/ltp/testcases/bin/nanosleep04",
+    "/glibc/ltp/testcases/bin/pipe2_01",
+    "/glibc/ltp/testcases/bin/mmap09",
+    "/glibc/ltp/testcases/bin/shmctl08",
+    "/glibc/ltp/testcases/bin/getitimer02",
+    "/glibc/ltp/testcases/bin/abs01",
+    "/glibc/ltp/testcases/bin/getgroups01",
+    "/glibc/ltp/testcases/bin/atof01",
+    "/glibc/ltp/testcases/bin/getdents02",
+    "/glibc/ltp/testcases/bin/close01",
+    "/glibc/ltp/testcases/bin/fstatat01",
+    "/glibc/ltp/testcases/bin/dup07",
+    //"/glibc/ltp/testcases/bin/fork04",
+    "/glibc/ltp/testcases/bin/faccessat01",
     0,
 };
 
@@ -434,6 +434,46 @@ static char *ltp_case_name(char *path)
         path++;
     }
     return name;
+}
+
+static int ltp_has_prefix(const char *path, const char *prefix)
+{
+    while (*prefix)
+    {
+        if (*path != *prefix)
+            return 0;
+        path++;
+        prefix++;
+    }
+    return 1;
+}
+
+static const char *ltp_runtime_root_dir(const char *root_dir)
+{
+    if (ltp_has_prefix(root_dir, "/glibc") && root_dir[6] == 0)
+        return "/musl";
+    return root_dir;
+}
+
+static const char *ltp_runtime_case_path(const char *path, char *buf, int buflen)
+{
+    const char *from = "/glibc/ltp/";
+    const char *to = "/musl/ltp/";
+    int from_len = _strlen(from);
+    int to_len = _strlen(to);
+    int path_len = _strlen(path);
+    int i, j;
+
+    if (!ltp_has_prefix(path, from))
+        return path;
+    if (to_len + path_len - from_len + 1 > buflen)
+        return path;
+
+    for (j = 0; j < to_len; j++)
+        buf[j] = to[j];
+    for (i = from_len; i <= path_len; i++, j++)
+        buf[j] = path[i];
+    return buf;
 }
 
 static int run_busybox_argv(char *argv[])
@@ -567,6 +607,8 @@ void run_probe()
 void run_ltp_profile(const char *root_dir, const char *profile_name)
 {
     int pid, status;
+
+    root_dir = ltp_runtime_root_dir(root_dir);
     printf("#### OS COMP TEST GROUP START %s ####\n", profile_name);
     sys_chdir(root_dir);
     pid = fork();
@@ -616,6 +658,8 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
     printf("#### OS COMP TEST GROUP START %s ####\n", profile_name);
     for (i = 0; cases[i]; i++)
     {
+        char runtime_case[128];
+        const char *exec_path = ltp_runtime_case_path(cases[i], runtime_case, sizeof(runtime_case));
         const char *case_name = ltp_case_name(cases[i]);
 
         printf("RUN LTP CASE %s\n", case_name);
@@ -628,9 +672,9 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
         if (pid == 0)
         {
             char *newargv[] = {
-                cases[i],
+                (char *)exec_path,
                 0};
-            sys_execve(cases[i], newargv, envp);
+            sys_execve(exec_path, newargv, envp);
             print("execve error.\n");
             exit(1);
         }
