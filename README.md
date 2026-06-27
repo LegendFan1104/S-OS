@@ -66,10 +66,3 @@ qemu-system-loongarch64 -kernel kernel-la -m 1G -nographic -smp 1 \
   -netdev user,id=net0 \
   -rtc base=utc
 ```
-
-## 文档
-
-详细设计文档、架构说明、开发进展、测试体系等见 **[docx/](docx/)** 目录。
-初赛文档、ppt见**[初赛提交/](初赛提交/)**
-
-受限于仓库大小，初赛 PPT、答辩视频见[这里](https://pan.baidu.com/s/10Kx1rCboyJ2VnzkF5Iv7Kg?pwd=sos3)。
