@@ -52,6 +52,7 @@ cal_lines.sh
 disasm_kernel.sh
 qemu.log
 virt_la_debug.sh
+tools/
 
 sdcard-contents/
 sdcard-extracted/
@@ -67,3 +68,4 @@ base-la.img
 include/kernel/la_init_code.h
 include/kernel/rv_init_code.h
 log/
+tools/
