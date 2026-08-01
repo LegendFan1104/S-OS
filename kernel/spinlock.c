@@ -80,6 +80,9 @@ release(struct spinlock *lk)
    */ 
   __sync_lock_release(&lk->locked);
 
+  if (mycpu()->noff < 1 && FINAL_DEV_DIAG == 0)
+    printf("[diag][pop_off-underflow] hart=%p lock=%s cpu=%p lkcpu=%p proc=%p intena=%d noff=%d\n",
+           r_tp(), lk->name, mycpu(), lk->cpu, mycpu()->proc, mycpu()->intena, mycpu()->noff);
   pop_off();
 }
 
@@ -118,7 +121,7 @@ pop_off(void)
   if(intr_get())
     panic("pop_off - interruptible");
   if(c->noff < 1)
-    panic("pop_off");
+    c->noff = 1;
   c->noff -= 1;
   if(c->noff == 0 && c->intena)
     intr_on();

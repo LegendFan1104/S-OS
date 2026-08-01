@@ -11,6 +11,10 @@ struct pipe;
 #define MIN(a, b) (a < b ? a : b)
 #define MAX(a, b) (a > b ? a : b)
 
+#ifndef FINAL_DEV_DIAG
+#define FINAL_DEV_DIAG 0
+#endif
+
 // console.c
 void            chardev_init(void);
 void            consoleintr(int);

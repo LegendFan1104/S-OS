@@ -52,7 +52,13 @@ extern void swtch(struct context *idle, struct context *p);
 void hsai_trap_init(void)
 {
 #if defined RISCV
-    // w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
+    /*
+     * OpenSBI enters the kernel in S-mode, so external/software interrupt
+     * bits must be enabled here. timer_init() only turns on STIE; without
+     * SEIE, virtio disk interrupts never arrive and the first fs_mount()
+     * in forkret() stalls forever.
+     */
+    w_sie(r_sie() | SIE_SEIE | SIE_SSIE);
     w_stvec((uint64)kernelvec); ///< 设置内核trap入口
 #else
     uint32 ecfg = (0U << CSR_ECFG_VS_SHIFT) | HWI_VEC | TI_VEC; ///< 例外配置
@@ -333,6 +339,16 @@ void hsai_set_trapframe_pagetable(struct trapframe *trapframe) // 修改页表
 #endif
 }
 
+static void
+hsai_set_trapframe_kernel_hartid(struct trapframe *trapframe)
+{
+#if defined RISCV
+    trapframe->kernel_hartid = r_tp();
+#else
+    trapframe->kernel_hartid = r_tp();
+#endif
+}
+
 /**
  * @brief 开启时钟中断使能
  */
@@ -363,16 +379,20 @@ void hsai_usertrapret()
 {
     proc_t *p = myproc();
     struct trapframe *trapframe = p->trapframe;
+#if defined RISCV
+    static int diag_userret_once = 0;
+#endif
     intr_off();
     hsai_set_usertrap();
 
     /* 使用当前线程的内核栈而不是进程的主栈 */
     if (p->main_thread->kstack != p->kstack)
-        hsai_set_trapframe_kernel_sp(trapframe, p->main_thread->kstack + PGSIZE);
+        hsai_set_trapframe_kernel_sp(trapframe, p->main_thread->kstack + KSTACKSIZE);
     else
         hsai_set_trapframe_kernel_sp(trapframe, p->kstack + KSTACKSIZE);
 
     hsai_set_trapframe_pagetable(trapframe);
+    hsai_set_trapframe_kernel_hartid(trapframe);
     hsai_set_trapframe_kernel_trap(trapframe);
     hsai_set_csr_to_usermode();
 #if defined RISCV ///< 后续系统调用，只需要下面的代码
@@ -381,6 +401,12 @@ void hsai_usertrapret()
 
     uint64 satp = MAKE_SATP(myproc()->pagetable);
     uint64 fn = TRAMPOLINE + (userret - trampoline);
+    if (FINAL_DEV_DIAG && diag_userret_once == 0)
+    {
+        diag_userret_once = 1;
+        printf("[diag][usertrapret] pid=%d epc=%p sp=%p satp=%p fn=%p trapframe=%p\n",
+               p->pid, trapframe->epc, trapframe->sp, satp, fn, trapframe);
+    }
 #if DEBUG
     // printf("epc: 0x%p  ", trapframe->epc);
     // printf("即将跳转: %p\n", fn);
@@ -406,6 +432,15 @@ extern void list_file(const char *path);
 void forkret(void)
 {
     static int first = 1;
+#if defined RISCV
+    static int diag_forkret_once = 0;
+    if (FINAL_DEV_DIAG && diag_forkret_once == 0)
+    {
+        diag_forkret_once = 1;
+        printf("[diag][forkret-enter] pid=%d epc=%p sp=%p first=%d\n",
+               myproc()->pid, myproc()->trapframe->epc, myproc()->trapframe->sp, first);
+    }
+#endif
     release(&myproc()->lock);
     if (first)
     {
@@ -434,6 +469,10 @@ void forkret(void)
          */
         extern bool isnotforkret;
         isnotforkret = true;
+#if defined RISCV
+        if (FINAL_DEV_DIAG)
+            printf("[diag][forkret-initfs] cwd=%s fs=%p\n", myproc()->cwd.path, myproc()->cwd.fs);
+#endif
     }
     hsai_usertrapret();
 }
@@ -461,10 +500,17 @@ void usertrap(void)
     struct trapframe *trapframe = p->trapframe;
     int which_dev = 0;
 #if defined RISCV
+    static int diag_usertrap_count = 0;
 
     w_stvec((uint64)kernelvec);
 
     trapframe->epc = r_sepc();
+    if (FINAL_DEV_DIAG && diag_usertrap_count < 8)
+    {
+        diag_usertrap_count++;
+        printf("[diag][usertrap] pid=%d cause=%p epc=%p stval=%p\n",
+               p ? p->pid : -1, r_scause(), trapframe->epc, r_stval());
+    }
     if ((r_sstatus() & SSTATUS_SPP) != 0)
     {
         panic("usertrap: not from user mode");
@@ -900,6 +946,23 @@ void kerneltrap(void)
 
         printf("scause %p\n", scause);
         printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+        if (p == 0)
+        {
+            printf("kerneltrap: no current process on hart=%p cpu=%p\n", r_tp(), mycpu());
+            panic("kerneltrap");
+        }
+        trapframe = p->trapframe;
+        printf("kerneltrap: p=%p trapframe=%p main_thread=%p main_tf=%p\n",
+               p,
+               trapframe,
+               p->main_thread,
+               p->main_thread ? p->main_thread->trapframe : 0);
+        if (trapframe == 0)
+            panic("kerneltrap: null trapframe");
+        if (p->main_thread == 0)
+            panic("kerneltrap: null main_thread");
+        if (p->main_thread->trapframe == 0)
+            panic("kerneltrap: null main_thread trapframe");
         printf("trapframe a0=%p\na1=%p\na2=%p\na3=%p\na4=%p\na5=%p\na6=%p\na7=%p\nsp=%p\nepc=%p\n",
                trapframe->a0, trapframe->a1, trapframe->a2, trapframe->a3, trapframe->a4,
                trapframe->a5, trapframe->a6, trapframe->a7, trapframe->sp, trapframe->epc);

@@ -6,7 +6,11 @@ typedef struct proc proc_t; // 前置声明，保证proc_t已知
 #include "process.h"
 #include "context.h"
 
-#define NCPU 1
+#ifndef NUMCPU
+#define NUMCPU 16
+#endif
+
+#define NCPU NUMCPU
 
 typedef struct cpu 
 {
@@ -18,5 +22,6 @@ typedef struct cpu
 
 cpu_t*  mycpu(void);
 proc_t* myproc(void);
+void    cpuinit(void);
 
 #endif  ///< CPU_H

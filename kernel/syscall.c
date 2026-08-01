@@ -1005,7 +1005,7 @@ int sys_clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     }
     if (flags & CLONE_VM)
         return clone_thread(stack, ptid, tls, ctid, flags);
-    return clone(flags, stack, ptid, ctid);
+    return clone(flags, stack, ptid, tls, ctid);
 }
 
 int sys_clone3()
@@ -1690,6 +1690,7 @@ int sys_statfs(uint64 upath, uint64 addr)
 {
     char path[MAXPATH];
     proc_t *p = myproc();
+    struct statfs stat;
 
     // 复制路径
     if (copyinstr(p->pagetable, path, (uint64)upath, MAXPATH) == -1)
@@ -1697,11 +1698,7 @@ int sys_statfs(uint64 upath, uint64 addr)
         return -1;
     }
     DEBUG_LOG_LEVEL(LOG_DEBUG, "[sys_statfs]: path: %s,addr:%d\n", path, addr);
-    struct statfs stat;
-    if (copyinstr(p->pagetable, (char *)&stat, (uint64)addr, sizeof(stat)) == -1)
-    {
-        return -1;
-    }
+    memset(&stat, 0, sizeof(stat));
     struct filesystem *fs = get_fs_from_path(path);
     if (fs == NULL)
     {
@@ -2460,19 +2457,27 @@ uint64 sys_rt_sigprocmask(int how, uint64 uset, uint64 uoset)
 {
     __sigset_t set, oset; ///<  定义内核空间的信号集变量
 
-    if (uset && copyin(myproc()->pagetable, (char *)&set, uset, SIGSET_LEN * 8) < 0)
+    if (uset && copyin(myproc()->pagetable, (char *)&set, uset, sizeof(set)) < 0)
     {
         return -1;
     }
-    if (sigprocmask(how, &set, uoset ? &oset : NULL))
+    if (sigprocmask(how, uset ? &set : NULL, uoset ? &oset : NULL))
         return -1;
-    if (uoset && copyout(myproc()->pagetable, uoset, (char *)&oset, SIGSET_LEN * 8) < 0)
+    if (uoset && copyout(myproc()->pagetable, uoset, (char *)&oset, sizeof(oset)) < 0)
         return -1;
 #if DEBUG
     printf("[sys_rt_sigprocmask] return : how:%d,set:%p\n", how, set.__val[0]);
 #endif
     return 0;
 }
+
+typedef struct kernel_sigaction_abi
+{
+    uint64 sa_handler;
+    uint64 sa_flags;
+    uint64 sa_restorer;
+    __sigset_t sa_mask;
+} kernel_sigaction_abi_t;
 
 /**
  * @brief 设置或获取指定信号的处理行为
@@ -2489,16 +2494,29 @@ int sys_rt_sigaction(int signum, sigaction const *uact, sigaction *uoldact)
 #endif
     sigaction act = {0};
     sigaction oldact = {0};
+    kernel_sigaction_abi_t abi_act = {0};
+    kernel_sigaction_abi_t abi_oldact = {0};
+
+    if (signum <= 0 || signum > SIGRTMAX)
+        return -EINVAL;
+
     if (uact)
     {
-        if (copyin(myproc()->pagetable, (char *)&act, (uint64)uact, sizeof(sigaction)) < 0)
+        if (copyin(myproc()->pagetable, (char *)&abi_act, (uint64)uact, sizeof(abi_act)) < 0)
             return -1;
+        act.__sigaction_handler.sa_handler = (__sighandler_t)abi_act.sa_handler;
+        act.sa_mask = abi_act.sa_mask;
+        act.sa_flags = (int)abi_act.sa_flags;
     }
     if (set_sigaction(signum, uact ? &act : NULL, uoldact ? &oldact : NULL) < 0)
         return -1;
     if (uoldact)
     {
-        if (copyout(myproc()->pagetable, (uint64)uoldact, (char *)&oldact, sizeof(sigaction)) < 0)
+        abi_oldact.sa_handler = (uint64)oldact.__sigaction_handler.sa_handler;
+        abi_oldact.sa_flags = (uint64)(uint32)oldact.sa_flags;
+        abi_oldact.sa_restorer = 0;
+        abi_oldact.sa_mask = oldact.sa_mask;
+        if (copyout(myproc()->pagetable, (uint64)uoldact, (char *)&abi_oldact, sizeof(abi_oldact)) < 0)
             return -1;
     }
 #if DEBUG
@@ -2703,13 +2721,14 @@ uint64 sys_set_robust_list()
     return 0;
 }
 
+
 /**
  * @brief 返回线程id，不是进程id。主线程的tid通常等于进程id
  * @param 无参数
  */
 uint64 sys_gettid()
 {
-    return myproc()->pid; //< 之后tgkill向这个线程发送信号
+    return myproc()->main_thread->tid;
 }
 
 /**
@@ -2760,15 +2779,33 @@ uint64 sys_readlinkat(int dirfd, char *user_path, char *buf, int bufsize)
 uint64 sys_getrandom(void *buf, uint64 buflen, unsigned int flags)
 {
     DEBUG_LOG_LEVEL(LOG_DEBUG, "[sys_getrandom]: buf:%p, buflen:%d, flags:%d\n", buf, buflen, flags);
-    // printf("buf: %d, buflen: %d, flag: %d",(uint64)buf,buflen,flags);
-    /*loongarch busybox glibc启动时调用，参数是：buf: 540211080, buflen: 8, flag: 1.*/
-    if (buflen != 8)
+    static uint64 seed = 0x7be6f23c6eb43a7eULL;
+    char chunk[64];
+    uint64 copied = 0;
+
+    (void)flags;
+
+    while (copied < buflen)
     {
-        printf("sys_getrandom不支持非8字节的随机数!");
-        return -1;
+        uint64 block;
+        uint64 remain = buflen - copied;
+        uint64 n = remain < sizeof(chunk) ? remain : sizeof(chunk);
+        uint64 off = 0;
+
+        while (off < n)
+        {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            block = seed;
+            memmove(chunk + off, &block, MIN((uint64)sizeof(block), n - off));
+            off += sizeof(block);
+        }
+
+        if (copyout(myproc()->pagetable, (uint64)buf + copied, chunk, n) < 0)
+            return -1;
+        copied += n;
     }
-    uint64 random = 0x7be6f23c6eb43a7e;
-    copyout(myproc()->pagetable, (uint64)buf, (char *)&random, 8);
     return buflen;
 }
 
@@ -3274,16 +3311,9 @@ sys_futex(uint64 uaddr, int op, uint32 val, uint64 utime, uint64 uaddr2, uint32 
  */
 uint64 sys_set_tid_address(uint64 uaddr)
 {
-    uint64 address;
-    if (copyin(myproc()->pagetable, (char *)&address, uaddr, sizeof(uint64)) < 0)
-        return -1; ///< 复制失败
-
     struct proc *p = myproc();
-    p->main_thread->clear_child_tid = address;
-    int tid = p->main_thread->tid;
-    copyout(myproc()->pagetable, address, (char *)&tid, sizeof(int));
-
-    return tid;
+    p->main_thread->clear_child_tid = uaddr;
+    return p->main_thread->tid;
 }
 
 uint64 sys_mprotect(uint64 start, uint64 len, uint64 prot)
@@ -4227,9 +4257,12 @@ uint64 sys_shmctl(uint64 shmid, uint64 cmd, uint64 buf)
     return 0;
 }
 
-uint64 a[8]; // 8个a寄存器，a7是系统调用号
 void syscall(struct trapframe *trapframe)
 {
+    proc_t *p = myproc();
+    static int diag_init_syscall_count = 0;
+    uint64 a[8];
+
     for (int i = 0; i < 8; i++)
         a[i] = hsai_get_arg(trapframe, i);
     long long ret = -1;
@@ -4600,6 +4633,37 @@ void syscall(struct trapframe *trapframe)
     {
         ret = -ENOSYS;
     }
+    }
+    if (FINAL_DEV_DIAG && p && p->pid == 1 && diag_init_syscall_count < 32)
+    {
+        printf("[diag][syscall] pid=%d nr=%d name=%s ret=%lld\n",
+               p->pid,
+               (int)a[7],
+               get_syscall_name((int)a[7]),
+               ret);
+        diag_init_syscall_count++;
+    }
+    if (FINAL_DEV_DIAG && p && p->pid != 1)
+    {
+        int nr = (int)a[7];
+        if (nr == SYS_clone || nr == SYS_execve || nr == SYS_futex ||
+            nr == SYS_mmap || nr == SYS_munmap || nr == SYS_mprotect ||
+            nr == SYS_brk || nr == SYS_set_tid_address ||
+            nr == SYS_set_robust_list || nr == SYS_exit ||
+            nr == SYS_exit_group || nr == SYS_rt_sigaction ||
+            nr == SYS_rt_sigprocmask || nr == SYS_getrandom ||
+            nr == SYS_gettid || nr == SYS_socket ||
+            nr == SYS_bind || nr == SYS_listen ||
+            nr == SYS_accept || nr == SYS_connect)
+        {
+            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
+                   p->pid,
+                   p->main_thread ? p->main_thread->tid : -1,
+                   nr,
+                   get_syscall_name(nr),
+                   ret,
+                   a[0], a[1], a[2], a[3]);
+        }
     }
     trapframe->a0 = ret;
 }

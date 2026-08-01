@@ -5,6 +5,7 @@
 #define __PRINT_H__
 #include <stdbool.h>
 #include "types.h"
+#include "defs.h"
 
 
 // 异常码与描述信息结构体
@@ -86,9 +87,14 @@ enum LogLevel {
     } while(0)  // do-while结构避免宏展开问题
 
 // 默认日志宏（蓝色，INFO级别）
+#if FINAL_DEV_DIAG
 #define LOG(format, ...) \
     PRINT_COLOR(BLUE_COLOR_PRINT, "[INFO][%s:%d] " format, __FILE__, __LINE__, ##__VA_ARGS__)
+#else
+#define LOG(format, ...) do { } while (0)
+#endif
 
+#if FINAL_DEV_DIAG
 // 带级别的日志宏
 #define LOG_LEVEL(level, format, ...) do { \
     const char *color = BLUE_COLOR_PRINT; \
@@ -101,6 +107,9 @@ enum LogLevel {
     } \
     PRINT_COLOR(color, "[%s][%s:%d] " format, prefix, __FILE__, __LINE__, ##__VA_ARGS__); \
 } while (0)
+#else
+#define LOG_LEVEL(level, format, ...) do { } while (0)
+#endif
 
 #if DEBUG
 #define DEBUG_LOG_LEVEL(level, format, ...) do { \

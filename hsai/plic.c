@@ -2,7 +2,10 @@
 // loongarch使用pcie而不是mmio,写法可能很不一样
 // 因为是架构相关，所以在hsai目录
 #include "types.h"
+#if defined RISCV
 #include "riscv_memlayout.h"
+
+extern int riscv_platform_hart;
 
 void plicinit(void)
 {
@@ -14,7 +17,7 @@ void plicinit(void)
 
 void plicinithart(void)
 {
-    int hart = 0;
+    int hart = riscv_platform_hart;
 
     // set uart's enable bit for this hart's S-mode.
     *(uint32 *)PLIC_SENABLE(hart) = (1 << UART0_IRQ) | (1 << VIRTIO0_IRQ);
@@ -25,12 +28,18 @@ void plicinithart(void)
 
 int plic_claim(void)
 {
-    int hart = 0;
+    int hart = riscv_platform_hart;
     int irq = *(uint32 *)PLIC_SCLAIM(hart);
     return irq;
 }
 void plic_complete(int irq)
 {
-    int hart = 0;
+    int hart = riscv_platform_hart;
     *(uint32 *)PLIC_SCLAIM(hart) = irq;
 }
+#else
+void plicinit(void) {}
+void plicinithart(void) {}
+int plic_claim(void) { return 0; }
+void plic_complete(int irq) { (void)irq; }
+#endif
