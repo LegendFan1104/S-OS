@@ -65,9 +65,6 @@ static void refresh_process_timer(proc_t *p, uint64 now)
     } while (p->alarm_ticks <= now);
 }
 
-#define GOLDFISH_RTC_BASE 0x101000UL
-#define GOLDFISH_RTC_TIME_LOW_REG (*(volatile uint32_t *)((GOLDFISH_RTC_BASE + 0x00) | dmwin_win0))
-#define GOLDFISH_RTC_TIME_HIGH_REG (*(volatile uint32_t *)((GOLDFISH_RTC_BASE + 0x04) | dmwin_win0))
 #define LS7A_RTC 0x100d0100
 #define LS7A_RTC_TIME_REG (*(volatile uint32_t *)((LS7A_RTC + 0x00) | dmwin_win0))
 
@@ -75,16 +72,13 @@ static uint64
 read_rtc_seconds(void)
 {
 #ifdef RISCV
-    uint32 hi0, hi1, lo;
-
-    do
-    {
-        hi0 = GOLDFISH_RTC_TIME_HIGH_REG;
-        lo = GOLDFISH_RTC_TIME_LOW_REG;
-        hi1 = GOLDFISH_RTC_TIME_HIGH_REG;
-    } while (hi0 != hi1);
-
-    return ((((uint64)hi1) << 32) | lo) / 1000000000ULL;
+    /*
+     * QEMU virt in the final environment exposes the timer via ACLINT/SBI,
+     * but does not guarantee a Goldfish RTC MMIO device at 0x101000.
+     * Touching that address faults before we can enter userspace, so for
+     * RISC-V we fall back to a fixed UTC boot timestamp instead.
+     */
+    return 1735689600ULL;
 #else
     return LS7A_RTC_TIME_REG;
 #endif
@@ -98,6 +92,7 @@ sanitize_boot_time(uint64 rtc_sec)
     return rtc_sec;
 }
 
+#if !defined(RISCV)
 static uint64
 wait_rtc_second_change(uint64 prev, uint64 max_poll)
 {
@@ -109,6 +104,7 @@ wait_rtc_second_change(uint64 prev, uint64 max_poll)
     }
     return prev;
 }
+#endif
 
 static uint64
 sanitize_timer_freq(uint64 freq)
@@ -121,6 +117,9 @@ sanitize_timer_freq(uint64 freq)
 static uint64
 calibrate_timer_freq_from_rtc(void)
 {
+#ifdef RISCV
+    return DEFAULT_CLK_FREQ;
+#else
     uint64 sec0, sec1;
     uint64 t0, t1;
 
@@ -140,6 +139,7 @@ calibrate_timer_freq_from_rtc(void)
         return 0;
 
     return t1 - t0;
+#endif
 }
 
 uint64 boot_time = 0;
@@ -169,7 +169,8 @@ timer_init(void)
     timer_interval = timer_freq / TICK_HZ;
     if (timer_interval == 0)
         timer_interval = 1;
-    printf("timer_freq = %lu Hz, timer_interval = %lu\n", timer_freq, timer_interval);
+    if (FINAL_DEV_DIAG)
+        printf("timer_freq = %lu Hz, timer_interval = %lu\n", timer_freq, timer_interval);
 #ifdef RISCV
     #if defined SBI //< 使用sbi
     w_sie(r_sie() | SIE_STIE); //< 虽然start已经设置了SIE_STIE,这里再设置一次

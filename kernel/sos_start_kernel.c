@@ -11,6 +11,7 @@
 #include "string.h"
 #include "virt.h"
 #include "hsai_trap.h"
+#include "hsai_mem.h"
 #include "plic.h"
 #include "vmem.h"
 #include "inode.h"
@@ -22,6 +23,7 @@
 #include "figlet.h"
 #include "thread.h"
 #include "slab.h"
+#include "cpu.h"
 
 #if defined RISCV
 #include "riscv.h"
@@ -40,17 +42,54 @@ void init_process();
 
 #if defined RISCV
 extern void virtio_disk_init();
+static volatile int riscv_boot_hart = -1;
+static volatile int riscv_kernel_ready = 0;
+extern char _bss_start_addr[];
+extern char _bss_end_addr[];
+int riscv_platform_hart = 0;
 #else
 extern void virtio_probe();
 extern void la_virtio_disk_init(); 
 #endif
 
+#if defined RISCV
+static void
+riscv_clear_bss(void)
+{
+    memset(_bss_start_addr, 0, (uint64)(_bss_end_addr - _bss_start_addr));
+}
+#endif
+
 int sos_start_kernel()
 {
-    // if ( hsai::get_cpu()->get_cpu_id() == 0 )
+#if defined RISCV
+    int hartid = (int)r_tp();
+
+    if (hartid < 0 || hartid >= NCPU)
+    {
+        while (1)
+            asm volatile("wfi");
+    }
+
+    if (!__sync_bool_compare_and_swap(&riscv_boot_hart, -1, hartid))
+    {
+        while (!riscv_kernel_ready)
+            ;
+        __sync_synchronize();
+        while (1)
+            asm volatile("wfi");
+    }
+
+    w_tp(0);
+    riscv_clear_bss();
+    riscv_platform_hart = hartid;
+#endif
+
+    cpuinit();
     // 初始化输出串口
     chardev_init();
     printfinit();
+#if FINAL_DEV_DIAG
     for (int i = 65; i < 65 + 26; i++)
     {
         put_char_sync(i);
@@ -61,6 +100,7 @@ int sos_start_kernel()
     LOG("sos_start_kernel at :%p\n", &sos_start_kernel);
     extern uint64 boot_time;
     LOG("System boot timestamp is: %lld\n", boot_time);
+#endif
     // 初始化线程和进程
     thread_init();
     proc_init();
@@ -74,6 +114,7 @@ int sos_start_kernel()
 #if defined RISCV
     plicinit();
     plicinithart();
+    timer_init();
     virtio_disk_init();
 #else 
     virtio_probe();//发现virtio-blk-pci设备
@@ -87,6 +128,10 @@ int sos_start_kernel()
     vfs_ext4_init();
     // 初始化init线程
     init_process();
+#if defined RISCV
+    __sync_synchronize();
+    riscv_kernel_ready = 1;
+#endif
     // 进入调度器
     scheduler();
     while (1)
@@ -109,8 +154,10 @@ void init_process()
     initproc = p;
     p->state = RUNNABLE;
     uint32 len = sizeof(init_code);
+#if FINAL_DEV_DIAG
     printf("user len:%p\n", len);
     LOG("user init_code: %p\n", init_code);
+#endif
     uvminit(p, init_code, len);
     p->virt_addr = 0;
     p->sz = len;

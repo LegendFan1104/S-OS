@@ -26,6 +26,13 @@ enum redir
     REDIR_OUT,
     REDIR_APPEND,
 };
+#ifndef S_IFMT
+#define S_IFMT 00170000
+#endif
+#ifndef S_IFLNK
+#define S_IFLNK 0120000
+#endif
+#define EXEC_MAX_SYMLINKS 8
 static int flags_to_perm(int flags);
 static int loadseg(pgtbl_t pt, uint64 va, struct inode *ip, uint offset, uint sz);
 void alloc_aux(uint64 *aux, uint64 atid, uint64 value);
@@ -33,11 +40,9 @@ int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
 void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, uint64 aux[]);
 static uint64 load_interpreter(pgtbl_t pt, struct inode *ip, elf_header_t *interpreter);
 static int has_suffix(const char *path, const char *suffix);
-proc_t p_copy;
-uint64 ustack[NARG + 2];
-uint64 estack[NENV + 2];
-char *modified_argv[MAXARG];
-uint64 aux[MAXARG * 2 + 3] = {0, 0, 0};
+static void exec_parent_dir_from_path(const char *path, char *parent);
+static int resolve_exec_path(const char *path, char *resolved);
+static void exec_single_thread(proc_t *p);
 static int exec_trace_once = 0;
 int is_sh_script(char *path);
 int exec(char *path, char **argv, char **env)
@@ -45,6 +50,15 @@ int exec(char *path, char **argv, char **env)
     // load_elf_from_disk(0);
     struct inode *ip;
     char *original_path = path;
+    char resolved_path[MAXPATH];
+    uint64 ustack[NARG + 2] = {0};
+    uint64 estack[NENV + 2] = {0};
+    char *modified_argv[MAXARG] = {0};
+    uint64 aux[MAXARG * 2 + 3] = {0};
+    uint64 execfn_sp = 0;
+
+    if (resolve_exec_path(path, resolved_path) == 0)
+        path = resolved_path;
 
     /* 脚本处理，如果是shell脚本，替换为busybox执行 */
     int is_shell_script = is_sh_script(path); ///< 判断路径是否为shell脚本
@@ -53,10 +67,11 @@ int exec(char *path, char **argv, char **env)
         original_path = "/musl/busybox"; ///< 若为脚本，替换为busybox执行脚本
         modified_argv[0] = "busybox";
         modified_argv[1] = "sh";
+        modified_argv[2] = path;
         int i;
-        for (i = 2; i < MAXARG - 1 && argv[i - 2] != NULL; i++) ///< 复制原始参数
+        for (i = 3; i < MAXARG - 1 && argv[i - 2] != NULL; i++) ///< 跳过原argv[0]，传入解析后的脚本路径
         {
-            modified_argv[i] = argv[i - 2];
+            modified_argv[i] = argv[i - 1];
         }
         modified_argv[i] = NULL;
         argv = modified_argv;
@@ -89,8 +104,10 @@ int exec(char *path, char **argv, char **env)
 
     /* 准备新进程环境 */
     proc_t *p = myproc();
-    p_copy = *p;
+    pgtbl_t old_pt = p->pagetable;
+    uint64 old_virt_addr = p->virt_addr;
     uint64 oldsz = p->sz;
+    exec_single_thread(p);
     p->sz = 0;
     free_vma_list(p);                      ///< 清除进程原来映射的VMA空间
     vma_init(p);                           ///< 初始化VMA列表
@@ -303,6 +320,17 @@ int exec(char *path, char **argv, char **env)
         }
     }
 
+    sp -= strlen(path) + 1;
+    sp -= sp % 16;
+    assert(sp > stackbase, "sp out of range!");
+    ret = copyout(new_pt, sp, path, strlen(path) + 1);
+    if (ret < 0)
+    {
+        bad_stage = "copy-execfn";
+        goto bad;
+    }
+    execfn_sp = sp;
+
     /// 遍历环境变量数组 env，将每个环境变量字符串复制到用户栈 environment ASCIIZ str
     int envc = 0;
     int startup_aux_words = 0;
@@ -375,6 +403,7 @@ int exec(char *path, char **argv, char **env)
     alloc_aux(aux, AT_EGID, 0);                 // 有效组ID
     alloc_aux(aux, AT_SECURE, 0);               // 安全模式
     alloc_aux(aux, AT_RANDOM, sp);              // 随机数地址
+    alloc_aux(aux, AT_EXECFN, execfn_sp);       // 实际执行文件路径
     alloc_aux(aux, AT_FLAGS, 0);                // 标志位
     alloc_aux(aux, AT_NULL, 0);                 // 结束标志
 
@@ -448,8 +477,16 @@ int exec(char *path, char **argv, char **env)
         }
     }
 
-    p->trapframe->a0 = sp;
-    p->trapframe->a1 = sp + 8;
+    p->trapframe->a0 = ustack[0];
+    p->trapframe->a1 = sp + sizeof(uint64);
+    p->trapframe->a2 = sp + sizeof(uint64) * (ustack[0] + 2);
+    /*
+     * A freshly exec'd image must not inherit the previous program's TLS
+     * thread pointer. Static glibc binaries may touch stack-protector or TLS
+     * state very early during startup, so carrying over a stale tp can make
+     * them abort immediately with stack smashing detection.
+     */
+    p->trapframe->tp = 0;
 #if defined RISCV
     p->trapframe->epc = program_entry;
 #else
@@ -482,16 +519,37 @@ int exec(char *path, char **argv, char **env)
         }
     }
     /// 清理旧进程资源
-    proc_freepagetable(&p_copy, oldsz);
+    if (old_pt)
+    {
+        vmunmap(old_pt, TRAMPOLINE, 1, 0);
+        vmunmap(old_pt, TRAPFRAME, 1, 0);
+        uvmfree(old_pt, old_virt_addr, oldsz - old_virt_addr);
+    }
 
     return 0;
     //< FUCK GLIBC!!!
 
 bad:
-    printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
-           bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
+    if (FINAL_DEV_DIAG)
+        printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
+               bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
     panic("exec error!\n");
     return -1;
+}
+
+static void exec_single_thread(proc_t *p)
+{
+    thread_t *current = p->main_thread;
+    acquire(&p->lock);
+    for (struct list_elem *e = list_begin(&p->thread_queue);
+         e != list_end(&p->thread_queue); e = list_next(e))
+    {
+        thread_t *t = list_entry(e, thread_t, elem);
+        if (t != current)
+            t->state = t_ZOMBIE;
+    }
+    p->thread_num = 1;
+    release(&p->lock);
 }
 
 static int has_suffix(const char *path, const char *suffix)
@@ -504,18 +562,101 @@ static int has_suffix(const char *path, const char *suffix)
     return strcmp(path + path_len - suffix_len, suffix) == 0;
 }
 
+static void exec_parent_dir_from_path(const char *path, char *parent)
+{
+    const char *slash = strrchr(path, '/');
+
+    if (slash == path)
+    {
+        strcpy(parent, "/");
+        return;
+    }
+    if (slash == 0)
+    {
+        strcpy(parent, ".");
+        return;
+    }
+
+    memmove(parent, path, slash - path);
+    parent[slash - path] = '\0';
+}
+
+static int resolve_exec_path(const char *path, char *resolved)
+{
+    char current[MAXPATH];
+    char linkpath[MAXPATH];
+    char parent[MAXPATH];
+    struct kstat st;
+    size_t readbytes = 0;
+    int depth;
+
+    memset(current, 0, sizeof(current));
+    memset(linkpath, 0, sizeof(linkpath));
+    memset(parent, 0, sizeof(parent));
+    get_absolute_path(path, myproc()->cwd.path, current);
+
+    for (depth = 0; depth < EXEC_MAX_SYMLINKS; depth++)
+    {
+        if (vfs_ext4_stat(current, &st) < 0)
+            return -1;
+        if ((st.st_mode & S_IFMT) != S_IFLNK)
+        {
+            strncpy(resolved, current, MAXPATH - 1);
+            resolved[MAXPATH - 1] = '\0';
+            return 0;
+        }
+
+        memset(linkpath, 0, sizeof(linkpath));
+        readbytes = 0;
+        if (vfs_ext4_readlink(current, linkpath, MAXPATH - 1, &readbytes) < 0)
+            return -1;
+        if (readbytes >= MAXPATH)
+            readbytes = MAXPATH - 1;
+        linkpath[readbytes] = '\0';
+
+        if (linkpath[0] == '/')
+        {
+            strncpy(current, linkpath, MAXPATH - 1);
+            current[MAXPATH - 1] = '\0';
+        }
+        else
+        {
+            memset(parent, 0, sizeof(parent));
+            exec_parent_dir_from_path(current, parent);
+            memset(current, 0, sizeof(current));
+            get_absolute_path(linkpath, parent, current);
+        }
+    }
+
+    return -1;
+}
+
 int is_sh_script(char *path)
 {
+    char magic[2] = {0};
+    struct inode *ip;
     int len = strlen(path);
+
     if (len < 3)
     {
-        return 0;
+        goto detect_by_magic;
     }
     if (path[len - 1] == 'h' && path[len - 2] == 's' && path[len - 3] == '.')
     {
         return 1;
     }
-    return 0;
+
+detect_by_magic:
+    ip = namei(path);
+    if (ip == NULL)
+        return 0;
+    if (ip->i_op->read(ip, 0, (uint64)magic, 0, sizeof(magic)) != sizeof(magic))
+    {
+        free_inode(ip);
+        return 0;
+    }
+    free_inode(ip);
+    return magic[0] == '#' && magic[1] == '!';
 }
 
 void alloc_aux(uint64 *aux, uint64 atid, uint64 value)

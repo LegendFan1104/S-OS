@@ -650,7 +650,7 @@ int vfs_ext4_open(const char* path,const char* dirpath,int flags)
  * @param f 文件对象指针
  * @return int 成功返回0，失败返回错误码负数
  */
-int 
+int
 vfs_ext4_openat(struct file *f) 
 {
     file_vnode_t *vnode = NULL;
@@ -693,8 +693,21 @@ vfs_ext4_openat(struct file *f)
         ext4_get_sblock(f->f_path, &sb);
         if (sb != NULL && ext4_inode_type(sb, &inode) == EXT4_INODE_MODE_CHARDEV) 
         {
+            uint32 dev = ext4_inode_get_dev(&inode);
             f->f_type = FD_DEVICE;
-            f->f_major = ext4_inode_get_dev(&inode);
+            f->f_major = dev;
+            /*
+             * The final rootfs images ship Linux-style character device nodes
+             * (for example /dev/tty and /dev/null).  Our kernel uses a much
+             * smaller internal device table, so translate the common paths to
+             * the in-kernel device numbers before file I/O dispatch.
+             */
+            if (!strcmp(f->f_path, "/dev/tty") || !strcmp(f->f_path, "/dev/console"))
+                f->f_major = CONSOLE;
+            else if (!strcmp(f->f_path, "/dev/null"))
+                f->f_major = DEVNULL;
+            else if (!strcmp(f->f_path, "/dev/zero"))
+                f->f_major = DEVZERO;
         } 
         else
             f->f_type = FD_REG;

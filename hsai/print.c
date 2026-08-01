@@ -306,8 +306,13 @@ const char *get_exception_description(unsigned int ecode, unsigned int esubcode)
 // 异常打印函数
 void handle_exception(unsigned int ecode, unsigned int esubcode)
 {
+#if FINAL_DEV_DIAG
     const char *name = get_exception_name(ecode, esubcode);
     const char *desc = get_exception_description(ecode, esubcode);
 
     LOG_LEVEL(3, "\nEcode=0x%x, EsubCode=0x%x\n类型=%s, 描述: %s\n", ecode, esubcode, name, desc);
+#else
+    (void)ecode;
+    (void)esubcode;
+#endif
 }

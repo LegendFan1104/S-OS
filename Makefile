@@ -20,7 +20,7 @@ export ASFLAGS += -MD
 export CFLAGS = -ggdb3 -Wall -Werror -O0 -fno-omit-frame-pointer 
 export CFLAGS += -Iinclude $(INCLUDE_FALGES)
 export CFLAGS += -MD #生成make的依赖文件到.d文件
-export CFLAGS += -DNUMCPU=1 #宏
+export CFLAGS += -DNUMCPU=16 #宏
 export CFLAGS += -march=loongarch64 -mabi=lp64d
 export CFLAGS += -ffreestanding -fno-common -nostdlib -fno-stack-protector 
 export CFLAGS += -fno-pie -no-pie 
@@ -40,6 +40,16 @@ endif
 ifeq ($(TEST_PROFILE),probe-rv)
 RISCV_TEST_PROFILE := probe
 LOONGARCH_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),buildstorm-rv)
+RISCV_TEST_PROFILE := buildstorm
+LOONGARCH_TEST_PROFILE := smoke
+endif
+
+ifeq ($(TEST_PROFILE),buildstorm-la)
+LOONGARCH_TEST_PROFILE := buildstorm
+RISCV_TEST_PROFILE := smoke
 endif
 
 ifeq ($(TEST_PROFILE),ltp-musl-la)
@@ -100,9 +110,11 @@ FS_SIZE_MB = 512
 
 # .PHONY 是一个伪规则，其后面依赖的规则目标会成为一个伪目标，使得规则执行时不会实际生成这个目标文件
 .PHONY: all build-all-kernels la init_la_dir compile_all load_kernel clean la_qemu
-.PHONY: ltp-musl-la ltp-glibc-la ltp-musl-rv ltp-glibc-rv probe-rv
+.PHONY: ltp-musl-la ltp-glibc-la ltp-musl-rv ltp-glibc-rv probe-rv buildstorm-rv buildstorm-la
+.PHONY: run-final-rv run-final-la smoke-final
 
-all: clean build-all-kernels
+all: clean
+	$(MAKE) build-all-kernels
 
 build-all-kernels: init_la_dir init_rv_dir
 	#user
@@ -140,14 +152,16 @@ rv_disk_file = ../sdcard-rv.img
 # rv_disk_file = tmp/fs.img
 #la_disk_file = tmp/fs.img
 la_disk_file = ../sdcard-la.img
+FINAL_RV_IMG = sdcard-rv-pub.img
+FINAL_LA_IMG = sdcard-la-pub.img
 
 load_kernel: $(la_objs) $(LD_SCRIPT)
 	$(LD) $(LDFLAGS) -T $(LD_SCRIPT) -o $(la_kernel) $(la_objs) 
 
 clean: #删除rv,la的build路径
-	rm -rf build/loongarch
-	rm -rf build/riscv
-	rm -rf user/build
+	@[ ! -d build ] || find build -depth -mindepth 1 -exec rm -rf {} +
+	@[ ! -d user/build ] || find user/build -depth -mindepth 1 -exec rm -rf {} +
+	mkdir -p build user/build
 	rm -f $(DISK_IMG) $(DISK_LA_IMG)
 
 la_qemu: 
@@ -186,6 +200,16 @@ run:
 				-device virtio-net-pci,netdev=net0 \
                 -netdev user,id=net0,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555
 
+run-final-la:
+	qemu-system-loongarch64 \
+	-kernel kernel-la \
+	-m 1G -nographic -smp 1 \
+	-drive file=$(FINAL_LA_IMG),if=none,format=raw,id=x0 \
+	-device virtio-blk-pci,drive=x0 -no-reboot \
+	-device virtio-net-pci,netdev=net0 \
+	-netdev user,id=net0,hostfwd=tcp::5555-:5555,hostfwd=udp::5555-:5555 \
+	-rtc base=utc
+
 docker_compile_all: #编译之后想回归ls2k的版本，要先clean再make all
 	rm -rf build/loongarch
 	mkdir -p $(BUILDPATH)/kernel
@@ -214,7 +238,7 @@ export RISCV_ASFLAGS += -Iinclude $(INCLUDE_FALGES)
 export RISCV_CFLAGS = -ggdb3 -Wall -Werror -O0 -fno-omit-frame-pointer
 export RISCV_CFLAGS += -Iinclude $(INCLUDE_FALGES) 
 export RISCV_CFLAGS += -MD 
-export RISCV_CFLAGS += -DNUMCPU=1 #宏
+export RISCV_CFLAGS += -DNUMCPU=16 #宏
 export RISCV_CFLAGS += -DOPEN_COLOR_PRINT=1 #log宏，现在没有
 export RISCV_CFLAGS += -march=rv64gc -mabi=lp64d
 export RISCV_CFLAGS += -ffreestanding -fno-common -nostdlib -fno-stack-protector 
@@ -315,6 +339,21 @@ probe-rv: clean
 #不调试，直接运行
 run_sbi:
 	qemu-system-riscv64 -machine virt -bios default -kernel build/riscv/kernel-rv -m 1G -smp 1 -nographic -drive file=$(rv_disk_file),if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+
+run-final-rv:
+	qemu-system-riscv64 \
+	-machine virt -bios default -kernel kernel-rv \
+	-m 1G -smp 1 -nographic \
+	-drive file=$(FINAL_RV_IMG),if=none,format=raw,id=x0 \
+	-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+	-no-reboot \
+	-device virtio-net-device,netdev=net \
+	-netdev user,id=net \
+	-rtc base=utc
+
+smoke-final: all
+	timeout 20s $(MAKE) run-final-rv
+	timeout 30s $(MAKE) run-final-la
 
 #写Makefile时使用，查看要编译的源文件
 show:

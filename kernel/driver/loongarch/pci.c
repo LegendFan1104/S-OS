@@ -52,7 +52,8 @@ uint64 pci_device_probe(uint16 vendor_id, uint16 device_id)
         		}
         	}
 
-        	printf("%d %d %d\n", bus, dev, func);
+            if (FINAL_DEV_DIAG)
+        	    printf("%d %d %d\n", bus, dev, func);
         	goto out;
 
         }
@@ -65,7 +66,8 @@ uint64 pci_device_probe(uint16 vendor_id, uint16 device_id)
 	// printf("device_id: 0x%x\n", device_id);
 	// printf("bar_addr : 0x%x\n", ret);          // ECAM 中的 offset
 out:
-    printf("pci_base: %p\n",ret);
+    if (FINAL_DEV_DIAG)
+        printf("pci_base: %p\n",ret);
     return ret;
 }
 
