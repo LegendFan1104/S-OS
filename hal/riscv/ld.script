@@ -35,9 +35,11 @@ SECTIONS
 
   .bss : {
     . = ALIGN(16);
+    _bss_start_addr = .;
     *(.sbss .sbss.*) /* do not need to distinguish this from .bss */
     . = ALIGN(16);
     *(.bss .bss.*)
+    _bss_end_addr = .;
   }
 
   . = ALIGN(0x1000);

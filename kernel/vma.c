@@ -13,6 +13,65 @@
 #include "loongarch.h"
 #endif
 
+static uint64
+mmap_lower_bound(proc_t *p)
+{
+    uint64 lower = PGROUNDUP(p->sz);
+
+    if (lower < PGSIZE)
+        lower = PGSIZE;
+    return lower;
+}
+
+static int
+mmap_choose_addr(proc_t *p, uint64 len, uint64 *addr_out)
+{
+    struct vma *vma;
+    uint64 lower = mmap_lower_bound(p);
+    uint64 upper = USER_MMAP_START;
+
+    if (len == 0)
+    {
+        *addr_out = PGROUNDDOWN(USER_MMAP_START);
+        return 0;
+    }
+
+    len = PGROUNDUP(len);
+    for (vma = p->vma->prev; vma != p->vma; vma = vma->prev)
+    {
+        uint64 gap_low;
+        uint64 candidate;
+
+        if (vma->addr >= upper)
+            continue;
+        gap_low = vma->end;
+        if (gap_low < lower)
+            gap_low = lower;
+        if (upper > gap_low)
+        {
+            candidate = PGROUNDDOWN(upper - len);
+            if (candidate >= gap_low && candidate < upper)
+            {
+                *addr_out = candidate;
+                return 0;
+            }
+        }
+        upper = vma->addr;
+    }
+
+    if (upper > lower)
+    {
+        uint64 candidate = PGROUNDDOWN(upper - len);
+
+        if (candidate >= lower && candidate < upper)
+        {
+            *addr_out = candidate;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 struct vma *vma_init(struct proc *p)
 {
     struct vma *vma = (struct vma *)pmem_alloc_pages(1);
@@ -148,44 +207,23 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
     if (fd != -1 && f == NULL)
         return -1;
     struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
+    if (vma == NULL)
+        return -1;
     if (!(flags & MAP_FIXED))
         start = vma->addr;
-    if (-1 != fd)
-    {
-        int ret = vfs_ext4_lseek(f, offset, SEEK_SET); //< 设置文件位置指针到指定偏移量
-        if (ret < 0)
-        {
-            DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
-            return ret;
-        }
-    }
-    else
+    if (-1 == fd)
     {
         return start;
     }
-    if (vma == NULL)
-        return -1;
     assert(len, "len is zero!");
-    // /// @todo 逻辑有问题
     uint64 i;
+    uint64 file_size = 0;
 
-    //< 特殊处理一下，如果len大于文件大小，就把len减小到文件大小
-    //< !把下面处理len的代码块注释掉，也是可以跑的!
-    // uint64 file_size = 0;
-    // if (fd != -1)
-    // {
-    //     struct ext4_file *efile = (struct ext4_file *)f->f_data.f_vnode.data;
-    //     file_size = efile->fsize; // 实际文件大小
-    // }
-
-    // // 新增：调整映射长度（核心修复）
-    // size_t aligned_len = PGROUNDUP(len);
-    // if (fd != -1 && len > file_size)
-    // {
-    //     // 文件映射：禁止超过文件实际大小
-    //     len = PGROUNDUP(file_size); // 对齐到页边界
-    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Truncate mmap len to file size: 0x%x\n", len);
-    // }
+    if (f->f_type == FD_REG && f->f_data.f_vnode.data != NULL)
+    {
+        struct ext4_file *efile = (struct ext4_file *)f->f_data.f_vnode.data;
+        file_size = efile->fsize;
+    }
 
     for (i = 0; i < len; i += PGSIZE) //< 从offset开始读len字节  //< ?为什么la glibc一进来i就是0x8c000
     {
@@ -207,7 +245,8 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
             }
         }
         uint64 pa = experm(p->pagetable, start + i, perm); //< 检查是否可以访问start + i，如果可以就返回start + i所在页的物理地址
-        // assert(pa != 0, "pa is null!,va:%p", start + i);
+        if (pa == 0)
+            return -1;
 
         int remaining = len - i;
         int to_read = (remaining > PGSIZE) ? PGSIZE : remaining;
@@ -216,21 +255,25 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
         int bytes_read = 0;
         if (to_read > 0)
         {
-            // uint64 orig_pos = f->f_pos;
-            // int ret = vfs_ext4_lseek(f,start + i, SEEK_SET); //< 设置文件位置指针到指定偏移量
-            // if (ret < 0)
-            // {
-            //     DEBUG_LOG_LEVEL(LOG_WARNING, "lseek in pread failed!, ret is %d\n", ret);
-            //     return ret;
-            // }
-            bytes_read = get_file_ops()->read(f, start + i, to_read);
-            // vfs_ext4_lseek(f, orig_pos, SEEK_SET);
-            // bytes_read = vfs_ext4_readat(f,0,pa,to_read,offset+i); //< read比vfs_ext4_readat好，vfs_ext4_readat如果offset大于size会panic。之后删掉这行吧
-            if (bytes_read < 0)
+            int available = 0;
+
+            if ((uint64)offset + i < file_size)
             {
-                // 错误处理（如取消映射并返回）
-                panic("bytes_read null");
-                return -1;
+                uint64 file_remaining = file_size - ((uint64)offset + i);
+                available = (file_remaining > (uint64)to_read) ? to_read : (int)file_remaining;
+            }
+
+            if (available > 0)
+            {
+            bytes_read = get_file_ops()->readat(
+                f,
+                (pa | dmwin_win0),
+                available,
+                offset + i);
+                if (bytes_read < 0)
+                {
+                    return bytes_read;
+                }
             }
         }
 
@@ -262,15 +305,19 @@ int munmap(uint64 start, int len)
 {
     proc_t *p = myproc();
     struct vma *vma = p->vma->next; // 从链表头部开始遍历
-    uint64 end = PGROUNDDOWN(start + len);
-    start = PGROUNDDOWN(start);
+    uint64 end;
+    uint64 orig_start = start;
     int found = 0;
 
     // 参数合法性检查（需页对齐）
-    if (start != PGROUNDDOWN(start) || len <= 0)
+    if (len <= 0)
     {
         return -1; // EINVAL
     }
+    start = PGROUNDDOWN(start);
+    end = PGROUNDUP(orig_start + len);
+    if (end <= start)
+        return -1;
 
     // 遍历所有VMA
     while (vma != p->vma)
@@ -378,16 +425,28 @@ int munmap(uint64 start, int len)
 struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, int perm, int fd, int offset)
 {
     struct vma *vma = NULL;
-    struct vma *find_vma = find_mmap_vma(p->vma);
-    
-    // 检查find_mmap_vma是否返回NULL
-    if (find_vma == NULL) {
-        // 如果没有找到MMAP类型的VMA，使用链表头作为插入点
-        find_vma = p->vma;
+    uint64 mapped_len = 0;
+
+    if (len < 0)
+        return NULL;
+    if ((flags & MAP_FIXED) && (start % PGSIZE) != 0)
+        return NULL;
+
+    mapped_len = PGROUNDUP((uint64)len);
+    if ((flags & MAP_FIXED) == 0)
+    {
+        if (mmap_choose_addr(p, mapped_len, &start) < 0)
+        {
+            if (FINAL_DEV_DIAG)
+                printf("[diag][mmap-alloc-fail] pid=%d len=0x%lx sz=0x%lx flags=0x%x fd=%d\n",
+                       p->pid, mapped_len, p->sz, flags, fd);
+            return NULL;
+        }
     }
-    
-    if (start == 0 && len < find_vma->addr)
-        start = PGROUNDDOWN(find_vma->addr - len);
+    else
+    {
+        start = PGROUNDDOWN(start);
+    }
 
     int isalloc = 0;
     if (flags & MAP_ALLOC)
@@ -395,10 +454,12 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
     else if (fd != -1 && !(flags & MAP_SHARED))
         isalloc = 1;
 
-    vma = alloc_vma(p, MMAP, start, len, perm, isalloc, 0);
+    vma = alloc_vma(p, MMAP, start, mapped_len, perm, isalloc, 0);
     if (vma == NULL)
     {
-        panic("alloc_mmap_vma");
+        if (FINAL_DEV_DIAG)
+            printf("[diag][mmap-vma-null] pid=%d start=0x%lx len=0x%lx sz=0x%lx flags=0x%x fd=%d\n",
+                   p->pid, start, mapped_len, p->sz, flags, fd);
         return NULL;
     }
     vma->flags = flags;
@@ -415,7 +476,7 @@ struct vma *alloc_vma(struct proc *p, enum segtype type, uint64 addr, int64 sz, 
         return NULL;
     }
     
-    uint64 start = PGROUNDUP(addr);
+    uint64 start = PGROUNDDOWN(addr);
     uint64 end = PGROUNDUP(addr + sz);
 
     // uint64 start = PGROUNDUP(p->sz);
@@ -677,8 +738,9 @@ int free_vma_list(struct proc *p)
         return 1;
     }
     struct vma *vma = vma_head->next;
-    while (vma != vma_head)
+    while (vma && vma != vma_head)
     {
+        struct vma *next = vma->next;
         uint64 a;
         pte_t *pte;
         for (a = vma->addr; a < vma->end; a += PGSIZE)
@@ -693,10 +755,15 @@ int free_vma_list(struct proc *p)
             pmem_free_pages((void *)pa, 1);
             *pte = 0;
         }
-        vma = vma->next;
-        pmem_free_pages(vma->prev, 1);
+        pmem_free_pages(vma, 1);
+        vma = next;
     }
-    pmem_free_pages(vma, 1);
+    if (vma == vma_head)
+        pmem_free_pages(vma_head, 1);
+    else
+        if (FINAL_DEV_DIAG)
+            printf("free_vma_list: broken VMA list for pid=%d head=%p next=%p\n",
+                   p->pid, vma_head, vma);
     p->vma = NULL;
     return 1;
 }

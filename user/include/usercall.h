@@ -14,6 +14,7 @@ extern int sys_nanosleep(timeval_t *req, timeval_t *rem) __attribute__((section(
 extern int sys_brk(void *addr) __attribute__((section(".text.syscall_function")));
 extern long int sys_times(void *mytimes) __attribute__((section(".text.syscall_function")));
 extern int sys_uname(void *buf) __attribute__((section(".text.syscall_function")));
+extern int sys_sched_getaffinity(int pid, uint64 cpusetsize, void *mask) __attribute__((section(".text.syscall_function")));
 extern int sys_sched_yield(void) __attribute__((section(".text.syscall_function")));
 extern int getppid(void) __attribute__((section(".text.syscall_function")));
 extern int sys_execve(const char *name, char *const argv[], char *const argp[]) __attribute__((section(".text.syscall_function")));
@@ -32,9 +33,11 @@ extern void *sys_getcwd(char *buf,int size) __attribute__((section(".text.syscal
 extern int sys_mkdirat(int dirfd, const char *path, uint16 mode) __attribute__((section(".text.syscall_function")));
 extern int sys_chdir(const char *path) __attribute__((section(".text.syscall_function")));
 extern int sys_getdents64(int fd, struct linux_dirent64 *buf, int len) __attribute__((section(".text.syscall_function"))); 
+extern int sys_statfs(const char *path, void *buf) __attribute__((section(".text.syscall_function")));
 extern int mount (const char *special, const char *dir, const char *fstype, unsigned long flags, const void *data) __attribute__((section(".text.syscall_function"))); 
 extern int umount (const char *special) __attribute__((section(".text.syscall_function")));
 extern int sys_unlinkat(int dirfd, char *path, unsigned int flags) __attribute__((section(".text.syscall_function")));
+extern int sys_socket(int domain, int type, int protocol) __attribute__((section(".text.syscall_function")));
 extern void shutdown(void) __attribute__((section(".text.syscall_function")));
 extern uint64 sys_readv(int fd, const struct iovec *iov, int iovcnt) __attribute__((section(".text.syscall_function")));
 extern int sync(void) __attribute__((section(".text.syscall_function")));

@@ -528,9 +528,12 @@ void pmem_init()
         panic("buddy system init failed");
     }
 
-    printf("kernel_mem_start = %p\n", _mem_start);
-    printf("kernel_mem_end  = %p\n", _mem_end);
-    LOG("pmem init success (buddy system)\n");
+    if (FINAL_DEV_DIAG)
+    {
+        printf("kernel_mem_start = %p\n", _mem_start);
+        printf("kernel_mem_end  = %p\n", _mem_end);
+        LOG("pmem init success (buddy system)\n");
+    }
 }
 
 /**

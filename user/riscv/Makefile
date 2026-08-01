@@ -22,6 +22,10 @@ ifeq ($(RISCV_TEST_PROFILE),probe)
 RISCV_CFLAGS += -DTEST_PROFILE_PROBE=1
 endif
 
+ifeq ($(RISCV_TEST_PROFILE),buildstorm)
+RISCV_CFLAGS += -DTEST_PROFILE_BUILDSTORM=1
+endif
+
 # card source
 c_src := $(wildcard *.c) #user.c
 s_src := $(wildcard *.S) #usys.S

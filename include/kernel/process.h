@@ -126,7 +126,7 @@ void sleep_on_chan(void *, struct spinlock *);
 void wakeup(void *);
 void yield(void);
 uint64 fork(void);
-int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid);
+int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid);
 int wait(int pid, uint64 addr, int options);
 void exit(int exit_state);
 void proc_yield(void);

@@ -23,7 +23,12 @@ struct proc pool[NPROC];
 char kstack[NPROC][PAGE_SIZE];
 //__attribute__((aligned(4096))) char ustack[NPROC][PAGE_SIZE];
 //__attribute__((aligned(4096))) char trapframe[NPROC][PAGE_SIZE];
-__attribute__((aligned(4096))) char entry_stack[PAGE_SIZE];
+/*
+ * Early RISC-V boot clears .bss after switching onto entry_stack.
+ * Keep the bootstrap stacks out of .bss so we do not wipe the live stack
+ * while the boot hart is still running on it.
+ */
+__attribute__((aligned(4096))) char entry_stack[NCPU][PAGE_SIZE] = {{1}};
 // extern char boot_stack_top[];
 proc_t *initproc; // 第一个用户态进程,永不退出
 spinlock_t pid_lock;
@@ -208,6 +213,7 @@ extern struct list free_thread; ///< 全局空闲线程链表
 static void freeproc(proc_t *p)
 {
     assert(holding(&p->lock), "caller must hold p->lock");
+    struct trapframe *proc_trapframe = p->trapframe;
     
     if (debug_buddy)
     {
@@ -217,11 +223,11 @@ static void freeproc(proc_t *p)
     }
     
     // 先释放进程的trapframe（主线程也使用这个）
-    if (p->trapframe)
+    if (proc_trapframe)
     {
         if (debug_buddy)
-            printf("freeproc: freeing process trapframe %p\n", p->trapframe);
-        pmem_free_pages(p->trapframe, 1);
+            printf("freeproc: freeing process trapframe %p\n", proc_trapframe);
+        pmem_free_pages(proc_trapframe, 1);
         p->trapframe = NULL;
     }
     
@@ -232,6 +238,7 @@ static void freeproc(proc_t *p)
         struct list_elem *tmp = list_next(e);
         thread_t *t = list_entry(e, thread_t, elem);
         t->state = t_UNUSED; ///< 将线程状态设置为未使用
+        futex_clear(t);
         
         if (debug_buddy)
             printf("freeproc: processing thread %d, trapframe: %p\n", t->tid, t->trapframe);
@@ -239,7 +246,7 @@ static void freeproc(proc_t *p)
         // 关键修复：避免重复释放trapframe
         // 主线程的trapframe已经通过进程trapframe释放了
         // 其他线程的trapframe需要单独释放
-        if (t->trapframe && t->trapframe != p->trapframe)
+        if (t->trapframe && t->trapframe != proc_trapframe)
         {
             if (debug_buddy)
                 printf("freeproc: freeing thread trapframe %p\n", t->trapframe);
@@ -256,8 +263,7 @@ static void freeproc(proc_t *p)
         // vmunmap(kernel_pagetable, t->kstack - PGSIZE, 1, 0); ///< 忘了为什么写这个了
         if (t->kstack != p->kstack)
         {
-            vmunmap(kernel_pagetable, t->kstack, 1, 0); ///< 释放线程的内核栈
-            kfree((void *)t->kstack_pa);
+            pmem_free_pages((void *)t->kstack_pa, KSTACKSIZE / PGSIZE);
         }
         list_remove(e);
         list_push_front(&free_thread, e);
@@ -400,7 +406,8 @@ void proc_mapstacks(pgtbl_t pagetable)
             assert(ret == 1, "Error Map Proc Stack\n");
         }
     }
-    debug_print_all_kstack_extpage();
+    if (debug_buddy)
+        debug_print_all_kstack_extpage();
 }
 
 extern char trampoline;
@@ -461,7 +468,7 @@ void scheduler(void)
                 p->main_thread = t;                                     ///< 切换到当前线程
                 copycontext(&p->context, &p->main_thread->context);     ///< 切换到线程的上下文
                 copytrapframe(p->trapframe, p->main_thread->trapframe); ///< 切换到线程的trapframe
-                if (p->context.ra < KERNEL_BASE)
+                if (FINAL_DEV_DIAG && p->context.ra < KERNEL_BASE)
                 {
 #ifdef RISCV
                     printf("[diag][sched-in] pid=%d tid=%d user-range context.ra=%p context.sp=%p epc=%p\n",
@@ -675,7 +682,6 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
 {
     struct proc *p = myproc();
     thread_t *t = alloc_thread();
-    exit(0);
 
     acquire(&t->lock);
     t->p = p;
@@ -686,47 +692,26 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
     //     panic("toread_clone: mappages");
     // t->vtf = p->kstack - PGSIZE * p->thread_num * 2;
 
-    /* 2. 映射栈 */
-    void *kstack_pa = kalloc();
+    /* 2. 为子线程分配独立的完整内核栈 */
+    void *kstack_pa = pmem_alloc_pages(KSTACKSIZE / PGSIZE);
     if (NULL == kstack_pa)
-        panic("thread_clone: kalloc kstack failed");
-    DEBUG_LOG_LEVEL(LOG_DEBUG, "[map]thread kstack: %p\n", p->kstack - PGSIZE * (p->thread_num));
-    if (mappages(kernel_pagetable, p->kstack - PGSIZE * p->thread_num,
-                 (uint64)kstack_pa, PGSIZE, PTE_R | PTE_W) < 0)
-        panic("thread_clone: mappages");
+        panic("thread_clone: alloc kstack failed");
+    memset(kstack_pa, 0, KSTACKSIZE);
 
     t->kstack_pa = (uint64)kstack_pa;
-    t->kstack = p->kstack - PGSIZE * p->thread_num;
+    t->kstack = (uint64)kstack_pa;
 
-    /* 3. 设置新线程的函数入口 */
-    args_t tmp;
-    if (copyin(p->pagetable, (char *)(&tmp), stack_va,
-               sizeof(args_t)) < 0)
-    {
-        panic("copy in thread_stack_param failed");
-    }
-
-    /* 4. 设置trapframe和上下文，做好调度准备 */
-    list_push_front(&p->thread_queue, &t->elem);
-
+    /* 3. 按 Linux clone 语义准备子线程寄存器 */
     copytrapframe(t->trapframe, p->trapframe);
-
-    /* 对于 pthread_create，栈指针指向新线程的栈顶 */
-    t->trapframe->a0 = tmp.arg;  ///< 设置新线程的参数
-    t->trapframe->sp = stack_va; ///< 设置新线程的栈指针
-    t->trapframe->kernel_sp = p->kstack - PGSIZE * p->thread_num + PGSIZE;
+    t->trapframe->a0 = 0;        ///< 子线程从 clone 返回时返回值为 0
+    t->trapframe->sp = stack_va; ///< 使用用户传入的新栈顶
+    t->trapframe->kernel_sp = t->kstack + KSTACKSIZE;
 
     /* 处理CLONE_SETTLS */
     if (flags & CLONE_SETTLS)
         t->trapframe->tp = tls;
     else
         t->trapframe->tp = p->trapframe->tp;
-
-#ifdef RISCV
-    t->trapframe->epc = tmp.start_func;
-#else
-    t->trapframe->era = tmp.start_func;
-#endif
 
     copycontext_from_trapframe(&t->context, t->trapframe);
     t->context.ra = (uint64)forkret;
@@ -750,7 +735,10 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
     }
     t->sz = p->sz;         ///< 继承父进程的内存顶
     t->state = t_RUNNABLE; ///< 设置线程状态为可运行
+    acquire(&p->lock);
+    list_push_front(&p->thread_queue, &t->elem);
     p->thread_num++;
+    release(&p->lock);
     release(&t->lock);
     DEBUG_LOG_LEVEL(LOG_DEBUG, "clone_thread new thread pid is %d, tid is %d\n", t->p->pid, t->tid);
     return t->tid;
@@ -845,7 +833,7 @@ uint64 fork(void)
     DEBUG_LOG_LEVEL(LOG_DEBUG, "fork new proc pid is %d, tid is %d\n", np->pid, np->main_thread->tid);
     return pid;
 }
-int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
+int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
 {
     struct proc *np;
     struct proc *p = myproc();
@@ -878,12 +866,13 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
     np->sz = p->sz; ///< 继承父进程内存大小
     np->virt_addr = p->virt_addr;
     np->parent = p;
-    // @todo 未拷贝用户栈
-    // 复制trapframe, np的返回值设为0, 堆栈指针设为目标堆栈
+    // 按 Linux clone 语义：子进程从同一条返回路径继续执行，返回值为 0。
     *(np->trapframe) = *(p->trapframe); ///< 复制陷阱帧（Trapframe）并修改返回值
     np->trapframe->a0 = 0;
-
-    // @todo 未复制栈    if(stack != 0) np->tf->sp = stack;
+    if (stack != 0)
+        np->trapframe->sp = stack;
+    if (flags & CLONE_SETTLS)
+        np->trapframe->tp = tls;
 
     // 复制打开文件
     // increment reference counts on open file descriptors.
@@ -901,26 +890,13 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
     np->gid = p->gid;
     np->umask = p->umask;
     np->oom_score_adj = p->oom_score_adj;
-    args_t tmp;
-    if (copyin(p->pagetable, (char *)(&tmp), stack,
-               sizeof(args_t)) < 0)
-    {
-        panic("copy in thread_stack_param failed");
-    }
     pid = np->pid;
+    copytrapframe(np->main_thread->trapframe, np->trapframe);
     np->state = RUNNABLE;
     np->main_thread->state = t_RUNNABLE;
-#ifdef RISCV
-    np->trapframe->epc = tmp.start_func;
-#else
-    np->trapframe->era = tmp.start_func;
-#endif
-    np->trapframe->sp = stack;
-    np->trapframe->a0 = tmp.arg;
-    copytrapframe(np->main_thread->trapframe, np->trapframe);
     if (ptid != 0)
     {
-        if (copyout(np->pagetable, ptid, (char *)&p->pid, sizeof(p->pid)) < 0)
+        if (copyout(p->pagetable, ptid, (char *)&np->pid, sizeof(np->pid)) < 0)
         {
             panic("clone: copyout failed\n");
             return -1;
@@ -933,6 +909,8 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 ctid)
             panic("clone: copyout failed\n");
             return -1;
         }
+        if (flags & CLONE_CHILD_CLEARTID)
+            np->clear_child_tid = ctid;
     }
 
     release(&np->lock); ///< 释放 allocproc中加的锁
@@ -1091,7 +1069,7 @@ int growproc(int n)
     }
     p->sz += n;
 
-    return -ESRCH;
+    return 0;
 }
 
 int killed(struct proc *p)

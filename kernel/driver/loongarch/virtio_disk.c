@@ -226,13 +226,15 @@ void pci_device_init(uint64 pci_base, unsigned char bus, unsigned char device, u
 
             uint64 sz = ((uint64)base[4 + i + 1] << 32) | base[4 + i];
             sz = ~(sz & 0xFFFFFFFFFFFFFFF0) + 1;
-            printf("bar%d need size: 0x%x\n", i, sz);
+            if (FINAL_DEV_DIAG)
+                printf("bar%d need size: 0x%x\n", i, sz);
             uint64 mem_addr = pci_alloc_mmio(sz);
             // 写入分配的大小
             base[4 + i] = (uint32)(mem_addr);
             base[4 + i + 1] = (uint32)(mem_addr >> 32);
             __sync_synchronize();
-            printf("%p\n", mem_addr);
+            if (FINAL_DEV_DIAG)
+                printf("%p\n", mem_addr);
             i++; // 跳过下一个 BAR
         }
     }
@@ -297,7 +299,8 @@ void la_virtio_disk_init(void)
     /*读取vendor_id, device_id*/
     uint16 vendor_id = pci_config_read16(pci_base1 + 0); //< Vendor ID: 0x1AF4 该厂商ID归属于 Red Hat, Inc.
     uint16 device_id = pci_config_read16(pci_base1 + 2); //< Device ID: 0x1001 对应 Virtio块设备（Virtio Block Device）
-    printf("\n[la_virtio_disk_init] Device ID: %x, Vendor ID: %x\n\n", device_id, vendor_id);
+    if (FINAL_DEV_DIAG)
+        printf("\n[la_virtio_disk_init] Device ID: %x, Vendor ID: %x\n\n", device_id, vendor_id);
 
     // for (int i = 0;i < PGSIZE;i+=8) {
     //     printf("%x ", *(volatile uint64 *)((uint64)gs_virtio_blk_hw.common_cfg + i));
@@ -353,7 +356,8 @@ void la_virtio_disk_init(void)
 
     // check maximum queue size.
     uint32 max = virtio_pci_get_queue_size(&gs_virtio_blk_hw, qnum);
-    printf("queue_0 max size: %d\n", max);
+    if (FINAL_DEV_DIAG)
+        printf("queue_0 max size: %d\n", max);
     if (max == 0)
     {
         printf("virtio disk has no queue 0");
