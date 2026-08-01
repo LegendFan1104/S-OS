@@ -18,6 +18,10 @@ ifeq ($(LOONGARCH_TEST_PROFILE),submit)
 CFLAGS += -DTEST_PROFILE_SUBMIT=1
 endif
 
+ifeq ($(LOONGARCH_TEST_PROFILE),buildstorm)
+CFLAGS += -DTEST_PROFILE_BUILDSTORM=1
+endif
+
 # card source
 c_src := $(wildcard *.c) #user.c
 s_src := $(wildcard *.S) #usys.S

@@ -1,71 +1,67 @@
-# Build directories
-build/
-user/build/
-
-# Compiled object files
+# Build outputs
+/build/
+/user/build/
 *.o
 *.d
 
 # Kernel binaries
-kernel-la
-kernel-rv
-build/loongarch/kernel-la
-build/riscv/kernel-rv
+/kernel-rv
+/kernel-la
 
-# Disk images
-disk.img
-disk-la.img
-sdcard-rv.img
-sdcard-la.img
+# Optional runtime images
+/disk.img
+/disk-la.img
+/sdcard-rv.img
+/sdcard-la.img
+/sdcard-rv-pub.img
+/sdcard-la-pub.img
+/base-rv.img
+/base-la.img
+
+# Logs and traces
+*.log
+*.out
+*.err
+*.exit
+/qemu.log
+/log/
 
 # Temporary files
-*.log
-
-# IDE
-.vscode/
-.idea/
 *.swp
 *.swo
 *~
-
-# Local tooling and workspace metadata
-.codex/
-.codex-bridge/
-.claude/
-
-# OS files
 .DS_Store
+/tmp/
 
-tmp/
+# IDE / local tooling
+/.vscode/
+/.idea/
+/.agents/
+/.codex/
+/.codex-bridge/
+/.claude/
 
-CLAUDE.md
+# Local helper scripts and extracted workdirs
+/sdcard-contents/
+/sdcard-extracted/
+/workspace-export/
+/workspace-export*/
+/workspace-from-container/
+/workspace-from-container*/
+/workspace-src-export/
+/tools/
 
-# Local archives and helper status files
-*.tar
-*.exit
-docker_exec_probe.err
-docker_exec_probe.out
-docker_probe.txt
-hostname.from.sos3.txt
+# Local notes and one-off helper files
+/CLAUDE.md
+/docker_exec_probe.err
+/docker_exec_probe.out
+/docker_probe.txt
+/hostname.from.sos3.txt
+/cal_lines.sh
+/disasm_kernel.sh
+/virt_la_debug.sh
 
-cal_lines.sh
-disasm_kernel.sh
-qemu.log
-virt_la_debug.sh
-tools/
-
-sdcard-contents/
-sdcard-extracted/
-workspace-export/
-workspace-export*/
-workspace-from-container/
-workspace-from-container*/
-workspace-src-export/
-base-rv.img
-base-la.img
-.agents/
-.codex/
-include/kernel/la_init_code.h
-include/kernel/rv_init_code.h
-log/
-tools/
+# Local final-submission artifacts not meant for the remote repo
+/include/kernel/la_init_code.h
+/include/kernel/rv_init_code.h
+/sdcards-final.tar.xz

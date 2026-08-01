@@ -5,6 +5,10 @@
 int set_sigaction(int signum, sigaction const *act, sigaction *oldact)
 {
     proc_t *p = myproc();
+    if (signum <= 0 || signum > SIGRTMAX)
+    {
+        return -EINVAL;
+    }
     if(p->sigaction[signum].__sigaction_handler.sa_handler !=NULL && oldact !=NULL){ ///<  如果oldact非NULL且当前信号已有处理函数，保存旧配置
         *oldact = p->sigaction[signum];
     }
@@ -55,6 +59,6 @@ int sigprocmask(int how, __sigset_t *set, __sigset_t *oldset)
     特殊处理：确保SIGTERM、SIGKILL和SIGSTOP信号始终不被阻塞
     通过位操作保留这三个信号的屏蔽位，其他位清零
     */
-    p->sig_set.__val[0] &= 1ul << SIGTERM | 1ul << SIGKILL | 1ul << SIGSTOP;
+    p->sig_set.__val[0] &= ~((1ul << SIGTERM) | (1ul << SIGKILL) | (1ul << SIGSTOP));
     return 0;
 }

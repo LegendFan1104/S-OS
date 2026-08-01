@@ -39,6 +39,13 @@ struct ext4_blockdev_iface biface;
 /* 对应设备的VFS */
 struct vfs_ext4_blockdev vfs_ext4_bdev;
 
+/*
+ * Final-stage test images are about 14 GiB. The old 4 GiB cap truncates the
+ * visible address space and makes ext4 reads beyond that point fail with
+ * EINVAL, so user programs stored near the end of the image cannot be loaded.
+ */
+#define EXT4_DEFAULT_PART_SIZE (16ULL * 1024 * 1024 * 1024)
+
 /**
  * @brief 初始化ext4块设备
  * 
@@ -64,8 +71,7 @@ vfs_ext4_blockdev_init(struct vfs_ext4_blockdev *vbdev, int dev)
         bd -> bdif = iface;
         bd -> part_offset = 0;
 
-        /* TODO: 这里的分区大小是 512*8*1024*1024 = 4GB，未来可能会更改 */
-        bd -> part_size = (uint64) 512 * 8 *1024 * 1024;
+        bd -> part_size = EXT4_DEFAULT_PART_SIZE;
         
         ph_bbuf = &vbdev -> ph_bbuf[0];
 

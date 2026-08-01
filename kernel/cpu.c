@@ -39,8 +39,5 @@ mycpu(void)
 proc_t* 
 myproc(void) 
 {
-    push_off();
-    proc_t* p = mycpu()->proc;
-    pop_off();
-    return p;
+    return mycpu()->proc;
 }

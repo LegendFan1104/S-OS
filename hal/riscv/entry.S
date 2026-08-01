@@ -12,12 +12,18 @@ _entry:
         # with a 4096-byte stack per CPU.
         la sp, entry_stack
 #中文注释
-#使用sbi时，在这里不能读mhartid!!
-        #li a0, 1024*4
-	#csrr a1, mhartid #now there only is one CPU
-        #addi a1, a1, 1
-        #mul a0, a0, a1
-        #add sp, sp, a0
+# OpenSBI 启动协议下 a0 已经是 hartid；非 SBI 直接读 mhartid。
+# 为每个 hart 预留独立启动栈，避免多核早期共享同一栈。
+#if defined SBI
+        mv t0, a0
+#else
+        csrr a0, mhartid
+        mv t0, a0
+#endif
+        li t1, 1024*4
+        addi t0, t0, 1
+        mul t0, t0, t1
+        add sp, sp, t0
 	# jump to sos_start_kernel() in kernel/sos_start_kernel.c
         call start
 spin:

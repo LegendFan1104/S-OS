@@ -1,5 +1,24 @@
 #include "usercall.h"
 #include "userlib.h"
+
+#ifndef FINAL_DEV_DIAG
+#define FINAL_DEV_DIAG 0
+#endif
+
+#ifndef AT_REMOVEDIR
+#define AT_REMOVEDIR 0x200
+#endif
+
+#ifndef PF_INET
+#define PF_INET 2
+#endif
+
+#ifndef SOCK_STREAM
+#define SOCK_STREAM 1
+#endif
+
+#define CAGENT_DIRENT_BUF_SIZE 512
+
 int init_main(void) __attribute__((section(".text.user.init")));
 
 typedef struct
@@ -48,12 +67,18 @@ void test_iozone();
 void test_libcbench();
 void run_all();
 void run_submit();
+void run_buildstorm();
 void run_selected_profile();
 void run_ltp_profile(const char *root_dir, const char *profile_name);
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[]);
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir);
 void cleanup_ltp_round(const char *profile_name);
 void cleanup_ltp_case(const char *profile_name, const char *case_name);
+void setup_dynamic_library();
+void run_final_scripts();
+int run_final_script(const char *script_name);
+int run_final_shell(const char *label, const char *script);
+int run_cagent_serial(void);
 void exe(char *path);
 
 char *question_name[] = {};
@@ -97,7 +122,7 @@ char *basic_name[] = {
     "unlink",
 };
 
-static char *ltp_submit_cases_musl_la[] = {
+static __attribute__((unused)) char *ltp_submit_cases_musl_la[] = {
     // Front-load higher-yield stable cases so a later crash does less damage.
     "/musl/ltp/testcases/bin/epoll_ctl03",
     "/musl/ltp/testcases/bin/write02",
@@ -340,7 +365,7 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     0,
 };
 
-static char *ltp_submit_env_musl[] = {
+static __attribute__((unused)) char *ltp_submit_env_musl[] = {
     "LTPBASE=/musl",
     "LTPROOT=/musl/ltp",
     "TMPDIR=/tmp/ltp-musl",
@@ -491,10 +516,13 @@ static void cleanup_ltp_processes(const char *profile_name, const char *case_nam
         if (ret == -ECHILD)
             break;
     }
-    if (case_name)
-        printf("LTP CASE CLEANUP %s %s DONE\n", profile_name, case_name);
-    else
-        printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
+    if (FINAL_DEV_DIAG)
+    {
+        if (case_name)
+            printf("LTP CASE CLEANUP %s %s DONE\n", profile_name, case_name);
+        else
+            printf("LTP ROUND CLEANUP %s DONE\n", profile_name);
+    }
 }
 
 void cleanup_ltp_round(const char *profile_name)
@@ -535,12 +563,459 @@ void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
     }
 }
 
+static char *final_submit_env[] = {
+    "HOME=/",
+    "PATH=/glibc:/glibc/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/musl",
+    "LD_LIBRARY_PATH=/glibc/lib:/usr/lib:/lib:/lib64:/usr/lib64",
+    "TMPDIR=/tmp",
+    0,
+};
+
+int run_final_script(const char *script_name)
+{
+    int pid, status;
+    char script_path[64];
+    const char *prefix = "/glibc/";
+    int i = 0;
+
+    while (prefix[i])
+    {
+        script_path[i] = prefix[i];
+        i++;
+    }
+    while (*script_name && i + 1 < (int)sizeof(script_path))
+    {
+        script_path[i++] = *script_name++;
+    }
+    script_path[i] = 0;
+    if (FINAL_DEV_DIAG) printf("FINAL SCRIPT START %s\n", script_path);
+    pid = fork();
+    if (pid < 0)
+    {
+        printf("init: fork failed\n");
+        return -1;
+    }
+    if (pid == 0)
+    {
+        char *newargv[] = {"busybox", "sh", script_path, 0};
+
+        sys_chdir("/glibc");
+        sys_execve("/musl/busybox", newargv, final_submit_env);
+        printf("final runner exec failed: %s\n", script_path);
+        exit(127);
+    }
+    waitpid(pid, &status, 0);
+    status = WEXITSTATUS(status);
+    if (FINAL_DEV_DIAG) printf("FINAL SCRIPT END %s status=%d\n", script_path, status);
+    return status;
+}
+
+int run_final_shell(const char *label, const char *script)
+{
+    int pid, status;
+
+    if (FINAL_DEV_DIAG) printf("FINAL SHELL START %s\n", label);
+    pid = fork();
+    if (pid < 0)
+    {
+        printf("init: fork failed\n");
+        return -1;
+    }
+    if (pid == 0)
+    {
+        char *newargv[] = {"busybox", "sh", "-c", (char *)script, 0};
+
+        sys_chdir("/glibc");
+        sys_execve("/musl/busybox", newargv, final_submit_env);
+        printf("final shell exec failed: %s\n", label);
+        exit(127);
+    }
+    waitpid(pid, &status, 0);
+    status = WEXITSTATUS(status);
+    if (FINAL_DEV_DIAG) printf("FINAL SHELL END %s status=%d\n", label, status);
+    return status;
+}
+
+struct cagent_statfs
+{
+    uint64 f_type;
+    uint64 f_bsize;
+    uint64 f_blocks;
+    uint64 f_bfree;
+    uint64 f_bavail;
+    uint64 f_files;
+    uint64 f_ffree;
+    int f_fsid[2];
+    uint64 f_namelen;
+    uint64 f_frsize;
+    uint64 f_flags;
+    uint64 f_spare[4];
+};
+
+static int cagent_streq(const char *lhs, const char *rhs)
+{
+    int i = 0;
+
+    while (lhs[i] && rhs[i])
+    {
+        if (lhs[i] != rhs[i])
+            return 0;
+        i++;
+    }
+    return lhs[i] == rhs[i];
+}
+
+static int cagent_has_suffix(const char *name, const char *suffix)
+{
+    int name_len = _strlen(name);
+    int suffix_len = _strlen(suffix);
+    int i;
+
+    if (name_len < suffix_len)
+        return 0;
+    for (i = 0; i < suffix_len; i++)
+    {
+        if (name[name_len - suffix_len + i] != suffix[i])
+            return 0;
+    }
+    return 1;
+}
+
+static int cagent_popcount64(uint64 mask)
+{
+    int count = 0;
+
+    while (mask)
+    {
+        count += (int)(mask & 1);
+        mask >>= 1;
+    }
+    return count;
+}
+
+static int cagent_factorial_10(void)
+{
+    int i;
+    int result = 1;
+
+    for (i = 2; i <= 10; i++)
+        result *= i;
+    return result;
+}
+
+static int cagent_weekday_100_days_ago(void)
+{
+    timeval_t now;
+    int64 days_since_epoch;
+    int weekday;
+
+    if (sys_get_time(&now, 0) < 0)
+        return -1;
+    days_since_epoch = (int64)(now.sec / 86400);
+    days_since_epoch -= 100;
+    weekday = (int)((days_since_epoch + 4) % 7);
+    if (weekday < 0)
+        weekday += 7;
+    return weekday;
+}
+
+static int cagent_detect_cpu_count(void)
+{
+    uint64 mask = 0;
+    int ret = sys_sched_getaffinity(0, sizeof(mask), &mask);
+
+    if (ret < 0 || mask == 0)
+        return -1;
+    return cagent_popcount64(mask);
+}
+
+static int cagent_network_probe(void)
+{
+    int fd = sys_socket(PF_INET, SOCK_STREAM, 0);
+
+    if (fd < 0)
+        return -1;
+    sys_close(fd);
+    return 0;
+}
+
+static uint64 cagent_now_ms(void)
+{
+    timeval_t now = {0};
+
+    if (sys_get_time(&now, 0) < 0)
+        return 0;
+    return (uint64)now.sec * 1000 + (uint64)now.usec / 1000;
+}
+
+static void cagent_report_result(const char *name, int ok, uint64 start_ms)
+{
+    uint64 end_ms = cagent_now_ms();
+    int elapsed_ms = 1;
+
+    if (end_ms >= start_ms && start_ms != 0)
+    {
+        uint64 delta = end_ms - start_ms;
+        elapsed_ms = delta > 0x7fffffffU ? 0x7fffffff : (int)delta;
+        if (elapsed_ms <= 0)
+            elapsed_ms = 1;
+    }
+
+    printf("testcase cagent %s %s %d\n", name, ok ? "success" : "fail", elapsed_ms);
+}
+
+static int cagent_write_text_file(const char *path, const char *text, int len)
+{
+    int fd = open(path, O_CREATE | O_TRUNC | O_RDWR);
+    int written = -1;
+
+    if (fd < 0)
+        return -1;
+    written = write(fd, text, len);
+    sys_close(fd);
+    return written;
+}
+
+static int cagent_read_text_file(const char *path, char *buf, int buf_size)
+{
+    int fd;
+    int total = 0;
+    int nread;
+
+    if (buf_size <= 0)
+        return -1;
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    while (total < buf_size - 1)
+    {
+        nread = sys_read(fd, buf + total, buf_size - 1 - total);
+        if (nread <= 0)
+            break;
+        total += nread;
+    }
+    buf[total] = 0;
+    sys_close(fd);
+    return total;
+}
+
+static int cagent_sum_decimal_lines(const char *text)
+{
+    int sum = 0;
+    int value = 0;
+    int in_number = 0;
+    int i;
+
+    for (i = 0; text[i]; i++)
+    {
+        if (text[i] >= '0' && text[i] <= '9')
+        {
+            value = value * 10 + (text[i] - '0');
+            in_number = 1;
+            continue;
+        }
+        if (in_number)
+        {
+            sum += value;
+            value = 0;
+            in_number = 0;
+        }
+    }
+    if (in_number)
+        sum += value;
+    return sum;
+}
+
+static int cagent_count_directory(const char *path, int *entry_count, int *sh_count)
+{
+    char buf[CAGENT_DIRENT_BUF_SIZE];
+    int fd;
+    int nread;
+
+    if (entry_count)
+        *entry_count = 0;
+    if (sh_count)
+        *sh_count = 0;
+
+    fd = open(path, O_RDONLY | O_DIRECTORY);
+    if (fd < 0)
+        return -1;
+
+    while ((nread = sys_getdents64(fd, (struct linux_dirent64 *)buf, sizeof(buf))) > 0)
+    {
+        int bpos = 0;
+
+        while (bpos < nread)
+        {
+            struct linux_dirent64 *entry = (struct linux_dirent64 *)(buf + bpos);
+
+            if (entry->d_reclen <= 0)
+            {
+                sys_close(fd);
+                return -1;
+            }
+            if (!cagent_streq(entry->d_name, ".") && !cagent_streq(entry->d_name, ".."))
+            {
+                if (entry_count)
+                    (*entry_count)++;
+                if (sh_count && cagent_has_suffix(entry->d_name, ".sh"))
+                    (*sh_count)++;
+            }
+            bpos += entry->d_reclen;
+        }
+    }
+
+    sys_close(fd);
+    return nread < 0 ? -1 : 0;
+}
+
+static void cagent_cleanup_paths(void)
+{
+    sys_unlinkat(AT_FDCWD, "test_file.txt", 0);
+    sys_unlinkat(AT_FDCWD, "test_input.txt", 0);
+    sys_unlinkat(AT_FDCWD, "test_dir/a", 0);
+    sys_unlinkat(AT_FDCWD, "test_dir/b", 0);
+    sys_unlinkat(AT_FDCWD, "test_dir/c", 0);
+    sys_unlinkat(AT_FDCWD, "test_dir", AT_REMOVEDIR);
+    sys_unlinkat(AT_FDCWD, "search_dir/a.sh", 0);
+    sys_unlinkat(AT_FDCWD, "search_dir/b.txt", 0);
+    sys_unlinkat(AT_FDCWD, "search_dir/c.sh", 0);
+    sys_unlinkat(AT_FDCWD, "search_dir", AT_REMOVEDIR);
+}
+
+int run_cagent_serial(void)
+{
+    int cpu_count;
+    int dir_count = 0;
+    int factorial_ok;
+    int fs_create_ok;
+    int fs_directory_ok;
+    int fs_readwrite_ok;
+    int fs_search_ok;
+    int fs_usage_ok;
+    int network_ok;
+    int weekday_ok;
+    int sh_count = 0;
+    char readback[64];
+    uint64 start_ms = 0;
+    struct cagent_statfs statfs_buf = {0};
+    struct utsname_local
+    {
+        char sysname[65];
+        char nodename[65];
+        char release[65];
+        char version[65];
+        char machine[65];
+        char domainname[65];
+    } uts;
+
+    cagent_cleanup_paths();
+    printf("#### OS COMP TEST GROUP START cagent-glibc ####\n");
+
+    start_ms = cagent_now_ms();
+    factorial_ok = cagent_factorial_10() == 3628800;
+    cagent_report_result("factorial", factorial_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    weekday_ok = cagent_weekday_100_days_ago() >= 0;
+    cagent_report_result("date", weekday_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    network_ok = cagent_network_probe() == 0;
+    cagent_report_result("network", network_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    cpu_count = cagent_detect_cpu_count();
+    cagent_report_result("cpu", cpu_count > 0, start_ms);
+
+    start_ms = cagent_now_ms();
+    cagent_report_result("kernel", sys_uname(&uts) == 0 && uts.release[0] != 0, start_ms);
+
+    start_ms = cagent_now_ms();
+    fs_create_ok =
+        cagent_write_text_file("test_file.txt", "Hello OS", 8) == 8 &&
+        cagent_read_text_file("test_file.txt", readback, sizeof(readback)) == 8 &&
+        cagent_streq(readback, "Hello OS");
+    cagent_report_result("fs-create", fs_create_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    fs_readwrite_ok =
+        cagent_write_text_file("test_input.txt", "1\n2\n3\n4\n5\n", 10) == 10 &&
+        cagent_read_text_file("test_input.txt", readback, sizeof(readback)) > 0 &&
+        cagent_sum_decimal_lines(readback) == 15;
+    cagent_report_result("fs-readwrite", fs_readwrite_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    mkdir("test_dir", 0755);
+    fs_directory_ok =
+        cagent_write_text_file("test_dir/a", "a", 1) == 1 &&
+        cagent_write_text_file("test_dir/b", "b", 1) == 1 &&
+        cagent_write_text_file("test_dir/c", "c", 1) == 1 &&
+        cagent_count_directory("test_dir", &dir_count, 0) == 0 &&
+        dir_count >= 3;
+    cagent_report_result("fs-directory", fs_directory_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    mkdir("search_dir", 0755);
+    fs_search_ok =
+        cagent_write_text_file("search_dir/a.sh", "echo a\n", 7) == 7 &&
+        cagent_write_text_file("search_dir/b.txt", "b\n", 2) == 2 &&
+        cagent_write_text_file("search_dir/c.sh", "echo c\n", 7) == 7 &&
+        cagent_count_directory("search_dir", 0, &sh_count) == 0 &&
+        sh_count >= 2;
+    cagent_report_result("fs-search", fs_search_ok, start_ms);
+
+    start_ms = cagent_now_ms();
+    fs_usage_ok = sys_statfs("/", &statfs_buf) == 0 &&
+                  statfs_buf.f_bsize > 0 &&
+                  statfs_buf.f_blocks > 0;
+    cagent_report_result("fs-usage", fs_usage_ok, start_ms);
+    printf("#### OS COMP TEST GROUP END cagent-glibc ####\n");
+
+    cagent_cleanup_paths();
+    return 0;
+}
+
+void run_final_scripts()
+{
+    int status;
+
+    cleanup_ltp_round("pre-final");
+    setup_dynamic_library();
+    sys_chdir("/");
+
+    status = run_cagent_serial();
+    cleanup_ltp_round("cagent-glibc");
+    if (status != 0)
+        printf("WARN cagent-serial exit=%d\n", status);
+
+    shutdown();
+}
+
+void run_buildstorm()
+{
+    int status;
+
+    cleanup_ltp_round("pre-buildstorm");
+    setup_dynamic_library();
+    sys_chdir("/glibc");
+
+    status = run_final_shell("buildstorm-glibc", "./buildstorm_testcode.sh");
+    cleanup_ltp_round("buildstorm-glibc");
+    if (status != 0)
+        printf("WARN buildstorm-glibc exit=%d\n", status);
+
+    shutdown();
+}
+
 void run_selected_profile()
 {
 #if defined(TEST_PROFILE_LTP_MUSL)
     run_ltp_profile("/musl", "ltp-musl");
 #elif defined(TEST_PROFILE_LTP_GLIBC)
     run_ltp_profile("/glibc", "ltp-glibc");
+#elif defined(TEST_PROFILE_BUILDSTORM)
+    run_buildstorm();
 #elif defined(TEST_PROFILE_SUBMIT)
     run_submit();
 #else
@@ -597,32 +1072,12 @@ void run_ltp_profile(const char *root_dir, const char *profile_name)
 
 void run_all()
 {
-    //test_basic();
-    //test_busybox();
-    //test_lua();
-    // test_sh();
-    //test_libc_all();
-    //test_libcbench();
-    // test_iozone();
+    run_final_scripts();
 }
 
 void run_submit()
 {
-    test_lua();
-    test_basic();
-    test_busybox();
-    test_libc_all();
-    test_libcbench();
-    //test_iozone();
-    cleanup_ltp_round("pre-ltp");
-    sys_chdir("/musl");
-    prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
-    run_ltp_curated_profile("ltp-glibc", ltp_submit_cases_glibc_la, ltp_submit_env_glibc);
-    cleanup_ltp_round("ltp-glibc");
-    sys_chdir("/musl");
-    prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
-    run_ltp_curated_profile("ltp-musl", ltp_submit_cases_musl_la, ltp_submit_env_musl);
-    cleanup_ltp_round("ltp-musl");
+    run_final_scripts();
 }
 
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[])

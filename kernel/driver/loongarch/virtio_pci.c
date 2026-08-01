@@ -129,12 +129,15 @@ next:
 		return -1;
 	}
 
-    printf("found modern virtio pci device.\n");
-    printf("use_msix: %d\n", hw->use_msix);
-	printf("common cfg mapped at: %p\n", hw->common_cfg);
-    printf("isr cfg mapped at: %p\n", hw->isr_cfg);
-	printf("device cfg mapped at: %p\n", hw->device_cfg);
-	printf("notify base: %p, notify off multiplier: %d\n", hw->notify_cfg, hw->notify_off_multiplier);
+    if (FINAL_DEV_DIAG)
+    {
+        printf("found modern virtio pci device.\n");
+        printf("use_msix: %d\n", hw->use_msix);
+	    printf("common cfg mapped at: %p\n", hw->common_cfg);
+        printf("isr cfg mapped at: %p\n", hw->isr_cfg);
+	    printf("device cfg mapped at: %p\n", hw->device_cfg);
+	    printf("notify base: %p, notify off multiplier: %d\n", hw->notify_cfg, hw->notify_off_multiplier);
+    }
 
     return 0;
 }
