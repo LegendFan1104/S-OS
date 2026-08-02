@@ -13,6 +13,22 @@
 // 全局伙伴系统实例
 buddy_system_t buddy_sys;
 
+/* Diagnostic: count currently free pages across all buddy orders. */
+uint64 pmem_free_pages_count(void)
+{
+    uint64 free = 0;
+    for (int order = 0; order <= BUDDY_MAX_ORDER; order++)
+    {
+        int count = 0;
+        struct list_elem *e;
+        for (e = list_begin(&buddy_sys.free_lists[order]);
+             e != list_end(&buddy_sys.free_lists[order]); e = list_next(e))
+            count++;
+        free += (uint64)count * ((uint64)1 << order);
+    }
+    return free;
+}
+
 // 内存起始和结束地址
 uint64 _mem_start, _mem_end;
 int debug_buddy = 0;
@@ -54,6 +70,17 @@ uint64 get_buddy_addr(uint64 addr, int order)
 {
     uint64 block_size = PGSIZE << order;
     return addr ^ block_size;
+}
+
+/* A free block must have one live list entry.  Metadata and the bitmap can
+ * outlive that entry after a previous merge, so check the links before
+ * removing a buddy from a free list. */
+static bool
+buddy_elem_is_linked(struct list_elem *elem)
+{
+    if (elem == NULL || elem->prev == NULL || elem->next == NULL)
+        return false;
+    return elem->prev->next == elem && elem->next->prev == elem;
 }
 
 /**
@@ -444,6 +471,25 @@ void buddy_free(void *ptr, int order)
             break;
         }
 
+        if (!buddy_elem_is_linked(&buddy_node->elem))
+        {
+            /* This block is free according to the allocator metadata but
+             * has no removable list entry.  A null/null element is safe to
+             * reinsert; other link corruption is left untouched so that a
+             * later allocator check can report it without dereferencing an
+             * invalid pointer here. */
+            if (buddy_node->elem.prev == NULL && buddy_node->elem.next == NULL)
+            {
+                list_push_front(&buddy_sys.free_lists[merge_order],
+                                &buddy_node->elem);
+            }
+            if (FINAL_DEV_DIAG)
+                printf("[diag][buddy-unlinked] addr=%p order=%d node=%p prev=%p next=%p\n",
+                       (void *)buddy_addr, merge_order, buddy_node,
+                       buddy_node->elem.prev, buddy_node->elem.next);
+            break;
+        }
+
         if (debug_buddy)
             printf("buddy_free: merging with buddy at %p (order %d)\n",
                    (void *)buddy_addr, merge_order);
@@ -556,6 +602,8 @@ void *pmem_alloc_pages(int npages)
         if (!ptr)
         {
             DEBUG_LOG_LEVEL(DEBUG, "pmem_alloc_pages failed for %d pages (order %d)", npages, order);
+            printf("pmem_alloc_pages FAILED for %d pages (order %d), free=%lu/%lu\n",
+                   npages, order, pmem_free_pages_count(), buddy_sys.total_pages);
         }
         return ptr;
     }else{

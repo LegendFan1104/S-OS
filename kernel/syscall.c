@@ -14,6 +14,59 @@
 #include "vfs_ext4.h"
 #include "file.h"
 #include "ioctl.h"
+
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+#define STACK_DIAG_HISTORY 48
+struct stack_diag_syscall
+{
+    int pid;
+    int nr;
+    uint64 epc;
+    uint64 a0;
+    uint64 a1;
+    uint64 a2;
+    long long ret;
+};
+static struct stack_diag_syscall stack_diag_history[STACK_DIAG_HISTORY];
+static int stack_diag_history_next;
+
+static void
+stack_diag_record(proc_t *p, int nr, uint64 epc, uint64 a0, uint64 a1,
+                  uint64 a2, long long ret)
+{
+    struct stack_diag_syscall *entry;
+
+    if (p == NULL || p->pid < 3)
+        return;
+    entry = &stack_diag_history[stack_diag_history_next++ % STACK_DIAG_HISTORY];
+    entry->pid = p->pid;
+    entry->nr = nr;
+    entry->epc = epc;
+    entry->a0 = a0;
+    entry->a1 = a1;
+    entry->a2 = a2;
+    entry->ret = ret;
+}
+
+static void
+stack_diag_dump(int pid)
+{
+    int first = stack_diag_history_next - STACK_DIAG_HISTORY;
+
+    if (first < 0)
+        first = 0;
+    printf("[diag][stack-history] pid=%d\\n", pid);
+    for (int i = first; i < stack_diag_history_next; i++)
+    {
+        struct stack_diag_syscall *entry =
+            &stack_diag_history[i % STACK_DIAG_HISTORY];
+        if (entry->pid == pid)
+            printf("  nr=%d name=%s ret=%lld epc=%p a0=%p a1=%p a2=%p\\n",
+                   entry->nr, get_syscall_name(entry->nr), entry->ret,
+                   entry->epc, entry->a0, entry->a1, entry->a2);
+    }
+}
+#endif
 #include "elf.h"
 #include "fcntl.h"
 #include "stat.h"
@@ -100,7 +153,10 @@ struct linux_termios_local
     uint32 c_cflag;
     uint32 c_lflag;
     uint8 c_line;
-    uint8 c_cc[32];
+    /* TCGETS uses the Linux kernel termios ABI (NCCS == 19).  The glibc
+     * user-facing struct has 32 entries, but its wrapper translates from
+     * this 36-byte kernel buffer before checking its own stack canary. */
+    uint8 c_cc[19];
 };
 
 static int
@@ -278,9 +334,12 @@ busybox_virtual_size(const char *path)
     if (!strcmp(path, "/proc/config.gz"))
         return 0;
     if (!strcmp(path, "/proc/self/maps"))
-        return 96;
+        return 4096;
     if (!strcmp(path, "/proc/self/exe"))
-        return 8;
+    {
+        proc_t *current = myproc();
+        return (current && current->exe_path[0]) ? strlen(current->exe_path) : 8;
+    }
     if (!strcmp(path, "/proc/self/status"))
         return 256;
     if (!strcmp(path, "/proc/self/stat") || busybox_virtual_is_proc_stat_path(path))
@@ -353,6 +412,9 @@ fill_busybox_virtual_statx(const char *path, struct statx *st)
 #define MS_RDONLY 0x1
 #define S_IFMT 0170000
 #define S_IFLNK 0120000
+#ifndef ELOOP
+#define ELOOP 40
+#endif
 
 static char synthetic_ro_mount[MAXPATH];
 static int synthetic_mount_readonly;
@@ -503,6 +565,54 @@ stat_for_access(const char *path, int flags, struct kstat *st)
     return vfs_ext4_stat(target, st);
 }
 
+/* openat must follow the final symlink before the file descriptor is used by
+ * mmap.  Without this, a shared-library symlink is exposed as a tiny regular
+ * file containing its target pathname, which the ELF loader reports as an
+ * invalid header. */
+static int
+resolve_open_symlinks(char *path)
+{
+    char current[MAXPATH];
+    char linkpath[MAXPATH];
+    char parent[MAXPATH];
+    struct kstat st;
+
+    strncpy(current, path, MAXPATH - 1);
+    current[MAXPATH - 1] = '\0';
+    for (int depth = 0; depth < 8; depth++)
+    {
+        if (vfs_ext4_stat(current, &st) < 0)
+        {
+            strncpy(path, current, MAXPATH - 1);
+            path[MAXPATH - 1] = '\0';
+            return 0;
+        }
+        if ((st.st_mode & S_IFMT) != S_IFLNK)
+        {
+            strncpy(path, current, MAXPATH - 1);
+            path[MAXPATH - 1] = '\0';
+            return 0;
+        }
+
+        size_t readbytes = 0;
+        memset(linkpath, 0, sizeof(linkpath));
+        if (vfs_ext4_readlink(current, linkpath, MAXPATH - 1, &readbytes) < 0)
+            return -1;
+        if (readbytes >= MAXPATH)
+            readbytes = MAXPATH - 1;
+        linkpath[readbytes] = '\0';
+        if (linkpath[0] == '/')
+            strncpy(current, linkpath, MAXPATH - 1);
+        else
+        {
+            parent_dir_from_path(current, parent);
+            get_absolute_path(linkpath, parent, current);
+        }
+        current[MAXPATH - 1] = '\0';
+    }
+    return -1;
+}
+
 static int
 check_access_mode(const struct kstat *st, int mode)
 {
@@ -545,6 +655,7 @@ check_access_mode(const struct kstat *st, int mode)
  */
 int sys_openat(int fd, const char *upath, int flags, uint16 mode)
 {
+    static int diag_open_ok_count;
     if (fd != AT_FDCWD && (fd < 0 || fd >= NOFILE))
         return -ENOENT;
     char path[MAXPATH];
@@ -568,6 +679,8 @@ int sys_openat(int fd, const char *upath, int flags, uint16 mode)
         int apply_create_mode = 0;
         get_absolute_path(path, dirpath, absolute_path);
         normalize_proc_oom_score_adj_path(absolute_path);
+        if (resolve_open_symlinks(absolute_path) < 0)
+            return -ELOOP;
         if (open_requests_write(flags))
         {
             int ro_ret = reject_path_write_on_ro_mount(absolute_path);
@@ -606,6 +719,9 @@ int sys_openat(int fd, const char *upath, int flags, uint16 mode)
 
         if ((ret = vfs_ext4_openat(f)) < 0)
         {
+            if (FINAL_DEV_DIAG && p->pid != 1)
+                printf("[diag][openat-error] pid=%d path=%s abs=%s flags=0x%x ret=%d\n",
+                       p->pid, path, absolute_path, flags, ret);
             // printf("打开失败: %s (错误码: %d)\n", path, ret);
             /*
              *   以防万一有什么没有释放的东西，先留着
@@ -628,6 +744,12 @@ int sys_openat(int fd, const char *upath, int flags, uint16 mode)
             }
         }
         f->f_flags = saved_flags;
+        if (FINAL_DEV_DIAG && p->pid != 1 && diag_open_ok_count < 80)
+        {
+            printf("[diag][openat-ok] pid=%d path=%s type=%d fd=%d\n",
+                   p->pid, absolute_path, f->f_type, fd);
+            diag_open_ok_count++;
+        }
         /* @note 处理busybox的几个文件夹 */
         if (!strcmp(absolute_path, "/proc/mounts") ||  ///< df
             !strcmp(absolute_path, "/proc") ||         ///< ps
@@ -660,6 +782,28 @@ int sys_write(int fd, uint64 va, int len)
 {
     DEBUG_LOG_LEVEL(LOG_DEBUG, "[sys_write]:fd:%d va %p len %d\n", fd, va, len);
     struct file *f;
+    if ((FINAL_DEV_DIAG || STACK_COPYOUT_DIAG) && len >= 24)
+    {
+        char prefix[32] = {0};
+        if (copyin(myproc()->pagetable, prefix, va, sizeof(prefix) - 1) == 0 &&
+            !strncmp(prefix, "*** stack smashing", 18))
+        {
+#if defined RISCV
+            printf("[diag][stack-canary] pid=%d ra=%p epc=%p sp=%p tp=%p\n",
+                   myproc()->pid, myproc()->trapframe->ra,
+                   myproc()->trapframe->epc, myproc()->trapframe->sp,
+                   myproc()->trapframe->tp);
+#else
+            printf("[diag][stack-canary] pid=%d ra=%p era=%p sp=%p tp=%p\n",
+                   myproc()->pid, myproc()->trapframe->ra,
+                   myproc()->trapframe->era, myproc()->trapframe->sp,
+                   myproc()->trapframe->tp);
+#endif
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+            stack_diag_dump(myproc()->pid);
+#endif
+        }
+    }
     if (fd < 0 || fd >= NOFILE || (f = myproc()->ofile[fd]) == 0)
         return -ENOENT;
     int reallylen = get_file_ops()->write(f, va, len);
@@ -779,13 +923,60 @@ uint64 sys_writev(int fd, uint64 uiov, uint64 iovcnt)
     struct file *f;
     if (fd < 0 || fd >= NOFILE || (f = myproc()->ofile[fd]) == 0)
         return -1;
+    if (iovcnt == 0 || iovcnt > IOVMAX)
+        return -EINVAL;
     iovec v[IOVMAX];
     if (uiov)
     {
-        copyin(myproc()->pagetable, (char *)v, uiov, sizeof(iovec) * iovcnt); ///< / 将用户空间的iovec数组拷贝到内核空间
+        if (copyin(myproc()->pagetable, (char *)v, uiov,
+                   sizeof(iovec) * iovcnt) < 0)
+            return -EFAULT;
     }
     else
         return -1;
+    if ((FINAL_DEV_DIAG || STACK_COPYOUT_DIAG) && iovcnt > 0)
+    {
+        char prefix[32] = {0};
+        int checked = iovcnt < 4 ? iovcnt : 4;
+        for (int i = 0; i < checked; i++)
+        {
+            if (v[i].iov_len < 18 ||
+                copyin(myproc()->pagetable, prefix, (uint64)v[i].iov_base,
+                       sizeof(prefix) - 1) != 0 ||
+                strncmp(prefix, "*** stack smashing", 18))
+                continue;
+#if defined RISCV
+            printf("[diag][stack-canary] pid=%d ra=%p epc=%p sp=%p tp=%p\n",
+                   myproc()->pid, myproc()->trapframe->ra,
+                   myproc()->trapframe->epc, myproc()->trapframe->sp,
+                   myproc()->trapframe->tp);
+#else
+            printf("[diag][stack-canary] pid=%d ra=%p era=%p sp=%p tp=%p\n",
+                   myproc()->pid, myproc()->trapframe->ra,
+                   myproc()->trapframe->era, myproc()->trapframe->sp,
+                   myproc()->trapframe->tp);
+#endif
+
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+            stack_diag_dump(myproc()->pid);
+#endif
+            break;
+        }
+    }
+    if (FINAL_DEV_DIAG && fd == 2 && iovcnt == 3)
+    {
+        uint64 fortify_ra = 0;
+        uint64 canary_ra = 0;
+        /* rv64 frames: __libc_message=272, __fortify_fail=16,
+         * __stack_chk_fail=16. Their saved return addresses identify the
+         * original protected function at sp + 296. */
+        copyin(myproc()->pagetable, (char *)&fortify_ra,
+               myproc()->trapframe->sp + 200, sizeof(fortify_ra));
+        if (copyin(myproc()->pagetable, (char *)&canary_ra,
+                   myproc()->trapframe->sp + 296, sizeof(canary_ra)) == 0)
+            printf("[diag][libc-message] pid=%d fortify-ra=%p canary-ra=%p\n",
+                   myproc()->pid, fortify_ra, canary_ra);
+    }
     uint64 len = 0;
     // 遍历iovec数组，逐个缓冲区执行写入
     for (int i = 0; i < iovcnt; i++)
@@ -1161,8 +1352,22 @@ uint64 sys_brk(uint64 n)
     {
         return addr;
     }
-    if (growproc(n - addr) < 0)
-        return -1;
+    /* brk receives an absolute address.  Do not let unsigned subtraction
+     * turn a shrink request into a huge signed allocation. */
+    if (n < addr || n - addr > 0x7fffffffUL)
+    {
+        if (FINAL_DEV_DIAG)
+            printf("sys_brk NOGROW pid=%d n=%p addr=%p delta=%p free=%lu\n",
+                   myproc()->pid, n, addr, n >= addr ? n - addr : 0, pmem_free_pages_count());
+        return addr;
+    }
+    if (growproc((int)(n - addr)) < 0)
+    {
+        if (FINAL_DEV_DIAG)
+            printf("sys_brk FAILED pid=%d n=%p addr=%p grow=%p free=%lu\n",
+                   myproc()->pid, n, addr, n - addr, pmem_free_pages_count());
+        return addr;
+    }
     return n;
 }
 
@@ -1369,6 +1574,9 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
         return -1;
     }
 
+    if (FINAL_DEV_DIAG)
+        printf("[diag][execve-request] pid=%d path=%s\n", p->pid, path);
+
 #if DEBUG
     LOG("[sys_execve] path:%s, uargv:%p, uenv:%p\n", path, uargv, uenvp);
 #endif
@@ -1412,21 +1620,9 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
     memset(envp, 0, sizeof(envp));
     uint64 uenv = 0;
     int env_count = 0;
-    const char *ld_path = "LD_LIBRARY_PATH=/glibc/lib:/musl/lib:";
 
-    // ========== 关键修改：添加 LD_LIBRARY_PATH ==========
-    // 首先添加预设的 LD_LIBRARY_PATH
-    envp[env_count] = pmem_alloc_pages(1);
-    if (!envp[env_count])
-    {
-        err = -ENOMEM;
-        goto bad;
-    }
-    memset(envp[env_count], 0, PGSIZE);
-    strncpy(envp[env_count], ld_path, PGSIZE - 1);
-    env_count++;
-
-    // 复制用户环境变量（跳过已存在的 LD_LIBRARY_PATH）
+    // Preserve the caller's environment verbatim.  In particular, glibc
+    // programs may need a toolchain-specific LD_LIBRARY_PATH.
     for (i = 0; uenvp; i++)
     {
         if (env_count >= NELEM(envp) - 1)
@@ -1457,13 +1653,6 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
             pmem_free_pages(env_str, 1);
             err = -EFAULT;
             goto bad;
-        }
-
-        // 跳过用户设置的 LD_LIBRARY_PATH
-        if (strncmp(env_str, "LD_LIBRARY_PATH=", 16) == 0)
-        {
-            pmem_free_pages(env_str, 1);
-            continue;
         }
 
         envp[env_count++] = env_str;
@@ -1762,6 +1951,9 @@ int sys_fstatat(int fd, uint64 upath, uint64 state, int flags)
         char *dirpath = (fd == AT_FDCWD) ? myproc()->cwd.path : myproc()->ofile[fd]->f_path;
         get_absolute_path(path, dirpath, absolute_path);
         normalize_proc_oom_score_adj_path(absolute_path);
+        if (FINAL_DEV_DIAG && myproc()->pid != 1)
+            printf("[diag][fstatat-path] pid=%d path=%s abs=%s flags=%d\n",
+                   myproc()->pid, path, absolute_path, flags);
         if (is_busybox_virtual_path(absolute_path))
         {
             struct kstat st;
@@ -1772,9 +1964,14 @@ int sys_fstatat(int fd, uint64 upath, uint64 state, int flags)
             return 0;
         }
         struct kstat st;
-        ret = vfs_ext4_stat(absolute_path, &st);
+        ret = (flags & AT_SYMLINK_NOFOLLOW)
+                  ? vfs_ext4_stat(absolute_path, &st)
+                  : stat_for_access(absolute_path, flags, &st);
         if (ret < 0)
             return ret;
+        if (FINAL_DEV_DIAG && myproc()->pid != 1)
+            printf("[diag][fstatat-stat] pid=%d abs=%s ret=%d mode=0x%x size=%ld\n",
+                   myproc()->pid, absolute_path, ret, st.st_mode, st.st_size);
         if (copyout(myproc()->pagetable, state, (char *)&st, sizeof(st)))
         {
             return -1;
@@ -2117,7 +2314,8 @@ int sys_mount(const char *special, const char *dir, const char *fstype, unsigned
     }
     else
     {
-        printf("不支持的文件系统类型: %s\n", fstype_str);
+        if (FINAL_DEV_DIAG)
+            printf("不支持的文件系统类型: %s\n", fstype_str);
         return -1;
     }
 
@@ -2471,6 +2669,44 @@ uint64 sys_rt_sigprocmask(int how, uint64 uset, uint64 uoset)
     return 0;
 }
 
+struct linux_stack_t
+{
+    uint64 ss_sp;
+    int ss_flags;
+    int ss_pad;
+    uint64 ss_size;
+};
+
+uint64 sys_sigaltstack(uint64 uss, uint64 uoss)
+{
+    proc_t *p = myproc();
+    struct linux_stack_t old_stack;
+
+    if (uoss)
+    {
+        old_stack.ss_sp = p->sigaltstack_sp;
+        old_stack.ss_flags = p->sigaltstack_flags;
+        old_stack.ss_pad = 0;
+        old_stack.ss_size = p->sigaltstack_size;
+        if (copyout(p->pagetable, uoss, (char *)&old_stack, sizeof(old_stack)) < 0)
+            return -EFAULT;
+    }
+    if (uss)
+    {
+        struct linux_stack_t new_stack;
+        if (copyin(p->pagetable, (char *)&new_stack, uss, sizeof(new_stack)) < 0)
+            return -EFAULT;
+        if (new_stack.ss_flags & ~2)
+            return -EINVAL;
+        if (!(new_stack.ss_flags & 2) && new_stack.ss_size == 0)
+            return -ENOMEM;
+        p->sigaltstack_sp = new_stack.ss_sp;
+        p->sigaltstack_size = new_stack.ss_size;
+        p->sigaltstack_flags = new_stack.ss_flags;
+    }
+    return 0;
+}
+
 typedef struct kernel_sigaction_abi
 {
     uint64 sa_handler;
@@ -2545,8 +2781,9 @@ uint64 sys_faccessat(int fd, uint64 upath, int mode, int flags)
     memset(path, 0, MAXPATH);
     if (mode & ~(R_OK | W_OK | X_OK))
         return -EINVAL;
-    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EACCESS))
-        return -EINVAL;
+    /* glibc uses a compatibility bit when emulating faccessat2.  The
+     * permission check below does not need that bit's extra semantics. */
+    flags &= AT_SYMLINK_NOFOLLOW | AT_EACCESS;
     if (fd != AT_FDCWD && (fd < 0 || fd >= NOFILE || myproc()->ofile[fd] == 0))
         return -EBADF;
     if (copyinstr(myproc()->pagetable, path, upath, MAXPATH) == -1)
@@ -2742,6 +2979,12 @@ uint64 sys_tgkill(uint64 tgid, uint64 tid, int sig)
 #if DEBUG
     LOG_LEVEL(LOG_DEBUG, "[sys_tgkill]: tgid:%p, tid:%p, sig:%d\n", tgid, tid, sig);
 #endif
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+    /* glibc aborts a failed stack check with tgkill(SIGABRT), before the
+     * process has a chance to issue exit/exit_group. */
+    if (sig == SIGABRT && myproc()->pid >= 3)
+        stack_diag_dump(myproc()->pid);
+#endif
     return tgkill(tgid, tid, sig);
 }
 
@@ -2807,6 +3050,37 @@ uint64 sys_getrandom(void *buf, uint64 buflen, unsigned int flags)
         copied += n;
     }
     return buflen;
+}
+
+struct riscv_hwprobe_pair
+{
+    int64 key;
+    uint64 value;
+};
+
+/*
+ * Report no optional ISA extensions.  Returning a successful baseline probe
+ * is preferable to exposing an ENOSYS path to recent glibc/rust binaries;
+ * rv64gc remains the guaranteed execution ISA of this kernel.
+ */
+uint64 sys_riscv_hwprobe(uint64 upairs, uint64 pair_count,
+                         uint64 cpu_count, uint64 cpus, uint64 flags)
+{
+    struct riscv_hwprobe_pair pair;
+
+    if (pair_count > 64 || flags != 0 || cpu_count != 0 || cpus != 0)
+        return -EINVAL;
+    for (uint64 i = 0; i < pair_count; i++)
+    {
+        if (copyin(myproc()->pagetable, (char *)&pair,
+                   upairs + i * sizeof(pair), sizeof(pair)) < 0)
+            return -EFAULT;
+        pair.value = 0;
+        if (copyout(myproc()->pagetable, upairs + i * sizeof(pair),
+                    (char *)&pair, sizeof(pair)) < 0)
+            return -EFAULT;
+    }
+    return 0;
 }
 
 /**
@@ -2953,7 +3227,7 @@ uint64 sys_lseek(uint32 fd, uint64 offset, int whence)
         else if (!strcmp(f->f_path, "/proc/cpuinfo"))
             size = 128;
         else if (!strcmp(f->f_path, "/proc/self/exe"))
-            size = 16;
+            size = busybox_virtual_size(f->f_path);
 
         switch (whence)
         {
@@ -3323,13 +3597,20 @@ uint64 sys_mprotect(uint64 start, uint64 len, uint64 prot)
 #endif
     struct proc *p = myproc();
     int perm = get_mmapperms(prot);
-    int page_n = PGROUNDUP(len) >> PGSHIFT;
-    uint64 va = start;
+    int page_n;
+    uint64 va;
+
+    if (len == 0 || start + len < start)
+        return -EINVAL;
+    va = PGROUNDDOWN(start);
+    page_n = (PGROUNDUP(start + len) - va) >> PGSHIFT;
     for (int i = 0; i < page_n; i++)
     {
-        experm(p->pagetable, va, perm);
+        if (vm_protect(p->pagetable, va, 0, perm) == 0)
+            return -ENOMEM;
         va += PGSIZE;
     }
+    sfence_vma();
     return 0;
 }
 
@@ -4084,40 +4365,56 @@ int sys_recvfrom(int sockfd, uint64 buf, int len, int flags, uint64 addr, uint64
  * @param new_limit set的源地址
  * @param old_limit get的源地址
  * @return uint64 标准错误码
- * @todo 目前只处理了RLIMIT_NOFILE
  */
 uint64
 sys_prlimit64(pid_t pid, int resource, uint64 new_limit, uint64 old_limit)
 {
-    const struct rlimit nl;
+    struct rlimit nl;
     struct rlimit ol;
     proc_t *p = myproc();
 
-    switch (resource)
+    if (pid != 0 && pid != p->pid)
+        return -ESRCH;
+
+    if (new_limit)
     {
-    case RLIMIT_NOFILE:
-    {
-        if (new_limit)
+        if (copyin(p->pagetable, (char *)&nl, new_limit, sizeof(nl)) < 0)
+            return -EFAULT;
+        if (resource == RLIMIT_NOFILE)
         {
-            DEBUG_LOG_LEVEL(LOG_DEBUG, "RLIMIT_NOFILE, cur %ul, max %ul\n", nl.rlim_cur, nl.rlim_max);
-            if (copyin(p->pagetable, (char *)&nl, new_limit, sizeof(nl)) < 0)
-                return -EFAULT;
             p->ofn.rlim_cur = nl.rlim_cur;
             p->ofn.rlim_max = nl.rlim_max;
         }
-        if (old_limit)
-        {
-            DEBUG_LOG_LEVEL(LOG_DEBUG, "RLIMIT_NOFILE, get\n");
-            ol.rlim_cur = p->ofn.rlim_cur;
-            ol.rlim_max = p->ofn.rlim_max;
-            if (copyout(p->pagetable, old_limit, (char *)&ol, sizeof(nl)) < 0)
-                return -EFAULT;
-        }
+    }
+
+    memset(&ol, 0, sizeof(ol));
+    switch (resource)
+    {
+    case RLIMIT_NOFILE:
+        ol = p->ofn;
+        break;
+    case RLIMIT_STACK:
+        ol.rlim_cur = 8ULL * 1024 * 1024;
+        ol.rlim_max = (rlim_t)-1;
+        break;
+    case RLIMIT_AS:
+    case RLIMIT_DATA:
+        ol.rlim_cur = (rlim_t)-1;
+        ol.rlim_max = (rlim_t)-1;
+        break;
+    case RLIMIT_CORE:
+    case RLIMIT_FSIZE:
+        ol.rlim_cur = 0;
+        ol.rlim_max = 0;
+        break;
+    default:
+        ol.rlim_cur = (rlim_t)-1;
+        ol.rlim_max = (rlim_t)-1;
         break;
     }
-    default:
-        DEBUG_LOG_LEVEL(LOG_DEBUG, "sys_prlimit64 parameter is %d\n", resource);
-    }
+
+    if (old_limit && copyout(p->pagetable, old_limit, (char *)&ol, sizeof(ol)) < 0)
+        return -EFAULT;
     return 0;
 }
 
@@ -4261,10 +4558,16 @@ void syscall(struct trapframe *trapframe)
 {
     proc_t *p = myproc();
     static int diag_init_syscall_count = 0;
+    static int diag_error_syscall_count = 0;
     uint64 a[8];
 
     for (int i = 0; i < 8; i++)
         a[i] = hsai_get_arg(trapframe, i);
+#if !defined RISCV
+    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000)
+        printf("[diag][syscall] pid=%d nr=%lld a0=%p a1=%p a2=%p\n",
+               p->pid, (long long)a[7], a[0], a[1], a[2]);
+#endif
     long long ret = -1;
     switch (a[7])
     {
@@ -4453,6 +4756,9 @@ void syscall(struct trapframe *trapframe)
     case SYS_rt_sigaction:
         ret = sys_rt_sigaction((int)a[0], (const struct sigaction *)a[1], (struct sigaction *)a[2]);
         break;
+    case SYS_sigaltstack:
+        ret = sys_sigaltstack((uint64)a[0], (uint64)a[1]);
+        break;
     case SYS_faccessat:
         ret = sys_faccessat((int)a[0], (uint64)a[1], (int)a[2], (int)a[3]);
         break;
@@ -4476,6 +4782,9 @@ void syscall(struct trapframe *trapframe)
         break;
     case SYS_getrandom:
         ret = sys_getrandom((void *)a[0], (uint64)a[1], (uint64)a[2]);
+        break;
+    case SYS_riscv_hwprobe:
+        ret = sys_riscv_hwprobe(a[0], a[1], a[2], a[3], a[4]);
         break;
     case SYS_sendfile64:
         ret = sys_sendfile64((int)a[0], (int)a[1], (uint64 *)a[2], (uint64)a[3]);
@@ -4634,6 +4943,13 @@ void syscall(struct trapframe *trapframe)
         ret = -ENOSYS;
     }
     }
+#if !defined RISCV
+    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000 &&
+        (a[7] == SYS_mmap || a[7] == SYS_brk || a[7] == SYS_clone ||
+         a[7] == SYS_mprotect || a[7] == SYS_munmap))
+        printf("[diag][sysret] pid=%d nr=%lld ret=%p a0=%p a1=%p\n",
+               p->pid, (long long)a[7], ret, a[0], a[1]);
+#endif
     if (FINAL_DEV_DIAG && p && p->pid == 1 && diag_init_syscall_count < 32)
     {
         printf("[diag][syscall] pid=%d nr=%d name=%s ret=%lld\n",
@@ -4643,27 +4959,44 @@ void syscall(struct trapframe *trapframe)
                ret);
         diag_init_syscall_count++;
     }
+    if (FINAL_DEV_DIAG && p && p->pid != 1 && ret < 0 &&
+        diag_error_syscall_count < 96)
+    {
+        printf("[diag][syscall-error] pid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
+               p->pid, (int)a[7], get_syscall_name((int)a[7]), ret,
+               a[0], a[1], a[2], a[3]);
+        diag_error_syscall_count++;
+    }
     if (FINAL_DEV_DIAG && p && p->pid != 1)
     {
         int nr = (int)a[7];
         if (nr == SYS_clone || nr == SYS_execve || nr == SYS_futex ||
+            nr == SYS_write || nr == SYS_writev ||
             nr == SYS_mmap || nr == SYS_munmap || nr == SYS_mprotect ||
             nr == SYS_brk || nr == SYS_set_tid_address ||
             nr == SYS_set_robust_list || nr == SYS_exit ||
             nr == SYS_exit_group || nr == SYS_rt_sigaction ||
+            nr == SYS_sigaltstack ||
             nr == SYS_rt_sigprocmask || nr == SYS_getrandom ||
             nr == SYS_gettid || nr == SYS_socket ||
             nr == SYS_bind || nr == SYS_listen ||
-            nr == SYS_accept || nr == SYS_connect)
+            nr == SYS_accept || nr == SYS_connect ||
+            nr == SYS_faccessat || nr == SYS_statx || nr == SYS_fstatat ||
+            nr == SYS_readlinkat)
         {
-            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
+            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld ra=%p tp=%p a0=%p a1=%p a2=%p a3=%p\n",
                    p->pid,
                    p->main_thread ? p->main_thread->tid : -1,
                    nr,
                    get_syscall_name(nr),
                    ret,
+                   trapframe->ra,
+                   trapframe->tp,
                    a[0], a[1], a[2], a[3]);
         }
     }
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+    stack_diag_record(p, (int)a[7], trapframe->epc, a[0], a[1], a[2], ret);
+#endif
     trapframe->a0 = ret;
 }

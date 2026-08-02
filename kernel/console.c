@@ -194,7 +194,10 @@ devnullread(int user_dst, uint64 dst, int n)
 int
 devnullwrite(int user_src, uint64 src, int n)
 {
-  return 0;
+  /* Linux /dev/null accepts and consumes every byte.  Returning zero makes
+   * glibc retry a redirected write forever, which can hang utilities such as
+   * mount during the BuildStorm environment setup. */
+  return n;
 }
 
 int

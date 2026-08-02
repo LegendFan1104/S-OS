@@ -753,6 +753,9 @@ vfs_ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *readbytes
 
     if (!strcmp(path, "/proc/self/exe"))
     {
+        proc_t *current = myproc();
+        if (current && current->exe_path[0])
+            virtual_target = current->exe_path;
         size_t len = strlen(virtual_target);
         if (len > bufsize)
             len = bufsize;
@@ -884,6 +887,7 @@ vfs_ext4_fstat(struct file *f, struct kstat *st)
     status = ext4_get_sblock(file_path, &sb);
     if (status != EOK) return -status;
     
+    memset(st, 0, sizeof(*st));
     st->st_dev = 0;
     st->st_ino = inode_num;
     st->st_mode = ext4_inode_get_mode(sb, &inode);
@@ -892,7 +896,7 @@ vfs_ext4_fstat(struct file *f, struct kstat *st)
     st->st_gid = ext4_inode_get_gid(&inode);
     st->st_rdev = ext4_inode_get_dev(&inode);
     st->st_size = inode.size_lo;
-    st->st_blksize = inode.size_lo / inode.blocks_count_lo;
+    st->st_blksize = inode.blocks_count_lo ? inode.size_lo / inode.blocks_count_lo : PGSIZE;
     st->st_blocks = (uint64) inode.blocks_count_lo;
 
     st->st_atime_sec = ext4_inode_get_access_time(&inode);

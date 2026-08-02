@@ -132,8 +132,83 @@ busybox_virtual_is_dir(const char *path)
     return *p == '\0';
 }
 
+static int busybox_virtual_maps_diag_done;
+
 static void
 busybox_virtual_append_decimal(char *buf, int *pos, int value);
+
+static void
+busybox_virtual_append_hex(char *buf, int *pos, uint64 value)
+{
+    static const char digits[] = "0123456789abcdef";
+    for (int shift = 60; shift >= 0; shift -= 4)
+        buf[(*pos)++] = digits[(value >> shift) & 0xf];
+}
+
+static void
+busybox_virtual_append_text(char *buf, int *pos, int limit, const char *text)
+{
+    while (*text && *pos < limit - 1)
+        buf[(*pos)++] = *text++;
+}
+
+static void
+busybox_virtual_append_map(char *buf, int *pos, int limit, uint64 start,
+                           uint64 end, int perm, const char *path)
+{
+    if (*pos + 48 >= limit)
+        return;
+    busybox_virtual_append_hex(buf, pos, start);
+    buf[(*pos)++] = '-';
+    busybox_virtual_append_hex(buf, pos, end);
+    buf[(*pos)++] = ' ';
+    buf[(*pos)++] = (perm & PTE_R) ? 'r' : '-';
+    buf[(*pos)++] = (perm & PTE_W) ? 'w' : '-';
+    buf[(*pos)++] = (perm & PTE_X) ? 'x' : '-';
+    busybox_virtual_append_text(buf, pos, limit, "p 00000000 00:00 0 ");
+    busybox_virtual_append_text(buf, pos, limit, path);
+    if (*pos < limit - 1)
+        buf[(*pos)++] = '\n';
+}
+
+static const char *
+busybox_virtual_proc_self_maps(uint64 *len)
+{
+    static char maps[4096];
+    proc_t *p = myproc();
+    int pos = 0;
+
+    if (p == NULL)
+    {
+        maps[0] = '\0';
+        *len = 0;
+        return maps;
+    }
+
+    if (p->sz > p->virt_addr)
+        busybox_virtual_append_map(maps, &pos, sizeof(maps), p->virt_addr,
+                                   PGROUNDUP(p->sz), PTE_R | PTE_X,
+                                   p->exe_path[0] ? p->exe_path : "/busybox");
+    if (p->vma)
+    {
+        struct vma *vma;
+        for (vma = p->vma->next; vma != p->vma && pos < (int)sizeof(maps) - 64;
+             vma = vma->next)
+        {
+            const char *path;
+            if (vma->addr == vma->end)
+                continue;
+            path = (vma->type == STACK) ? "[stack]" :
+                   (vma->fd >= 0 && vma->fd < NOFILE && p->ofile[vma->fd]) ?
+                       p->ofile[vma->fd]->f_path : "[anon]";
+            busybox_virtual_append_map(maps, &pos, sizeof(maps), vma->addr,
+                                       vma->end, vma->perm, path);
+        }
+    }
+    maps[pos] = '\0';
+    *len = pos;
+    return maps;
+}
 
 static int
 busybox_virtual_proc_pid_from_path(const char *path, const char *suffix)
@@ -316,10 +391,7 @@ busybox_virtual_content(const char *path, uint64 *len)
         "rootfs / ext4 rw,relatime 0 0\n"
         "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n";
     static const char config_gz[] = "";
-    static const char self_maps[] =
-        "00400000-00401000 r-xp 00000000 00:00 0 /busybox\n"
-        "7fff0000-80000000 rw-p 00000000 00:00 0 [stack]\n";
-    static const char self_exe[] = "/busybox";
+    static char self_exe[MAXPATH];
     static const char pid_max[] = "32768\n";
     static const char pipe_user_pages_soft[] = "16384\n";
     static const char rtc[] = "";
@@ -340,9 +412,13 @@ busybox_virtual_content(const char *path, uint64 *len)
     else if (!strcmp(path, "/proc/config.gz"))
         content = config_gz;
     else if (!strcmp(path, "/proc/self/maps"))
-        content = self_maps;
+        return busybox_virtual_proc_self_maps(len);
     else if (!strcmp(path, "/proc/self/exe"))
+    {
+        proc_t *current = myproc();
+        strcpy(self_exe, (current && current->exe_path[0]) ? current->exe_path : "/busybox");
         content = self_exe;
+    }
     else if (!strcmp(path, "/proc/self/status"))
         return busybox_virtual_proc_self_status(len);
     else if (!strcmp(path, "/proc/self/stat"))
@@ -403,6 +479,12 @@ busybox_virtual_read(struct file *f, uint64 addr, int n)
 {
     uint64 len = 0;
     const char *content = busybox_virtual_content(f->f_path, &len);
+    if (FINAL_DEV_DIAG && !strcmp(f->f_path, "/proc/self/maps") &&
+        !busybox_virtual_maps_diag_done)
+    {
+        busybox_virtual_maps_diag_done = 1;
+        printf("[diag][maps-read] len=%ld content=%s", len, content);
+    }
     int remain;
     int to_copy;
 
@@ -644,15 +726,32 @@ filestat(struct file *f, uint64 addr)
 {
     struct proc *p = myproc();
     struct kstat st;
+    if (f == NULL)
+        return -EBADF;
+    memset(&st, 0, sizeof(st));
     if(f->f_type == FD_REG || f->f_type == FD_DEVICE)
     {
         int ret = vfs_ext4_fstat(f, &st);
-        if (ret < 0) return ret;
+        /* Character devices such as /dev/console have no ext4 inode. */
+        if (ret < 0 && f->f_type == FD_DEVICE)
+        {
+            st.st_mode = 0020000 | 0666;
+            st.st_blksize = PGSIZE;
+            ret = 0;
+        }
+        if (ret < 0)
+            return ret;
         if (copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -EFAULT;
         return 0;
     }
-    return -1;
+    if (f->f_type == FD_PIPE || f->f_type == FD_BUSYBOX)
+    {
+        st.st_mode = (f->f_type == FD_PIPE ? 0010000 : 0100000) | 0666;
+        st.st_blksize = PGSIZE;
+        return copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0 ? -EFAULT : 0;
+    }
+    return -EBADF;
 }
 
 /**

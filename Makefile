@@ -25,6 +25,10 @@ export CFLAGS += -march=loongarch64 -mabi=lp64d
 export CFLAGS += -ffreestanding -fno-common -nostdlib -fno-stack-protector 
 export CFLAGS += -fno-pie -no-pie 
 export CFLAGS += -DDEBUG=0
+export FINAL_DEV_DIAG ?= 0
+export CFLAGS += -DFINAL_DEV_DIAG=$(FINAL_DEV_DIAG)
+export STACK_COPYOUT_DIAG ?= 0
+export CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export LDFLAGS = -z max-page-size=4096
 export WORKPATH = $(shell pwd)
 export BUILDPATH = $(WORKPATH)/build/loongarch#build/loongarch
@@ -140,7 +144,7 @@ init_la_dir:
 
 compile_all: 
 	$(MAKE) la -C user/loongarch
-	$(MAKE) -C hal/loongarch
+	$(MAKE) -C hal/loongarch QEMU=virt
 	$(MAKE) -C kernel
 	$(MAKE) -C hsai
 
@@ -246,6 +250,8 @@ export RISCV_CFLAGS += -fno-pie -no-pie
 export RISCV_CFLAGS += -mcmodel=medany
 export RISCV_CFLAGS += -mno-relax
 export RISCV_CFLAGS += -DDEBUG=0
+export RISCV_CFLAGS += -DFINAL_DEV_DIAG=$(FINAL_DEV_DIAG)
+export RISCV_CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export RISCV_LDFLAGS = -z max-page-size=4096
 
 export RISCV_CFLAGS += -DRISCV=1 #宏
@@ -334,6 +340,12 @@ submit-rv: clean
 
 probe-rv: clean
 	$(MAKE) __sbi TEST_PROFILE=probe-rv
+
+buildstorm-rv: clean
+	$(MAKE) __sbi TEST_PROFILE=buildstorm-rv
+
+buildstorm-la: clean
+	$(MAKE) la TEST_PROFILE=buildstorm-la
 
 	
 #不调试，直接运行

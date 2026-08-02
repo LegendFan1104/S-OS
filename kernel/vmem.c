@@ -229,8 +229,17 @@ int mappages(pgtbl_t pt, uint64 va, uint64 pa, uint64 len, uint64 perm)
             assert(0, "pte remap! va: %p", current);
             return -1;
         }
-        /*给页表项写上控制位，置有效*/
+        /* Give every RISC-V leaf an architecturally valid accessed state.
+         * Do not depend on optional hardware A/D bit updates (Svadu). */
+#if defined RISCV
+        *pte = PA2PTE(pa) | perm | PTE_V | PTE_A;
+        if (perm & PTE_W)
+            *pte |= PTE_D;
+#else
         *pte = PA2PTE(pa) | perm | PTE_V;
+        if (perm & PTE_W)
+            *pte |= PTE_D;
+#endif
 
         /// @todo : 刷新TLB
         if (current == end)
@@ -383,31 +392,6 @@ int uvmcopy(pgtbl_t old, pgtbl_t new, uint64 sz)
             j += PGSIZE;
         }
     }
-#ifdef RISCV
-    for (int i = 0; i < 1; i++)
-    {
-        pte = walk(old, 0x000000010000036e, 0);
-        if (pte == NULL)
-            break;
-        if ((*pte & PTE_V) == 0)
-        {
-            break;
-            // panic(" uvmcopt: pte is not valid");
-        }
-        pa = PTE2PA(*pte);
-        flags = PTE_FLAGS(*pte);
-        if ((mem = pmem_alloc_pages(1)) == NULL) ///< 为子进程分配新物理页
-            goto err;
-        memmove(mem, (void *)(pa | dmwin_win0), PGSIZE);                         ///< 复制父进程页内容到子进程页
-        if (mappages(new, 0x000000010000036e, (uint64)mem, PGSIZE, flags) == -1) ///< 将新页映射到子进程页表
-        {
-            pmem_free_pages(mem, 1);
-            goto err;
-        }
-    }
-
-#endif
-
     while (i < sz)
     {
         if ((pte = walk(old, i, 0)) == NULL) ///< 查找父进程页表中对应的PTE
@@ -559,6 +543,33 @@ int copyinstr(pgtbl_t pt, char *dst, uint64 srcva, uint64 max)
 int copyout(pgtbl_t pt, uint64 dstva, char *src, uint64 len)
 {
     uint64 n, va0, pa0;
+
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+    {
+        static int stack_copyout_log_count;
+        proc_t *p = myproc();
+        uint64 sp;
+        uint64 stack_page;
+
+        /* Syscall result structures often live on the libc stack.  Log only
+         * writes to that page so an ABI-size error is visible without
+         * flooding the serial console. */
+        if (p && p->pid >= 3 && p->trapframe && len &&
+            stack_copyout_log_count < 256)
+        {
+            sp = p->trapframe->sp;
+            stack_page = PGROUNDDOWN(sp);
+            if (dstva < stack_page + PGSIZE && dstva + len > stack_page &&
+                dstva < sp + 1024 && dstva + len > sp - 1024)
+            {
+                printf("[diag][copyout-stack] pid=%d nr=%ld epc=%p dst=%p len=%ld sp=%p\n",
+                       p->pid, p->trapframe->a7, p->trapframe->epc,
+                       dstva, len, sp);
+                stack_copyout_log_count++;
+            }
+        }
+    }
+#endif
 
     while (len > 0)
     {
