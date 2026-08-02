@@ -542,6 +542,33 @@ int copyout(pgtbl_t pt, uint64 dstva, char *src, uint64 len)
 {
     uint64 n, va0, pa0;
 
+#if STACK_COPYOUT_DIAG && defined(RISCV)
+    {
+        static int stack_copyout_log_count;
+        proc_t *p = myproc();
+        uint64 sp;
+        uint64 stack_page;
+
+        /* Syscall result structures often live on the libc stack.  Log only
+         * writes to that page so an ABI-size error is visible without
+         * flooding the serial console. */
+        if (p && p->pid >= 3 && p->trapframe && len &&
+            stack_copyout_log_count < 256)
+        {
+            sp = p->trapframe->sp;
+            stack_page = PGROUNDDOWN(sp);
+            if (dstva < stack_page + PGSIZE && dstva + len > stack_page &&
+                dstva < sp + 1024 && dstva + len > sp - 1024)
+            {
+                printf("[diag][copyout-stack] pid=%d nr=%ld epc=%p dst=%p len=%ld sp=%p\n",
+                       p->pid, p->trapframe->a7, p->trapframe->epc,
+                       dstva, len, sp);
+                stack_copyout_log_count++;
+            }
+        }
+    }
+#endif
+
     while (len > 0)
     {
         if (dstva >= MAXVA)

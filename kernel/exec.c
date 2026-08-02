@@ -35,6 +35,9 @@ enum redir
 #define EXEC_MAX_SYMLINKS 8
 static int flags_to_perm(int flags);
 static int loadseg(pgtbl_t pt, uint64 va, struct inode *ip, uint offset, uint sz);
+static int elf_load_segments(pgtbl_t pt, struct inode *ip,
+                             const elf_header_t *ehdr, uint64 load_bias,
+                             uint64 *low_vaddr, uint64 *high_vaddr);
 void alloc_aux(uint64 *aux, uint64 atid, uint64 value);
 int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
 void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, uint64 aux[]);
@@ -45,6 +48,130 @@ static int resolve_exec_path(const char *path, char *resolved);
 static void exec_single_thread(proc_t *p);
 static void exec_reset_user_regs(struct trapframe *trapframe);
 static int exec_trace_once = 0;
+
+/*
+ * Establish a complete ELF image before returning to user mode.  PT_LOAD
+ * records may share a page and PIE images do not start at virtual address
+ * zero, so treating every record as an independent uvm_grow() interval is
+ * not valid.  The loader maps each page once, copies exactly p_filesz bytes,
+ * and only then applies the union of the segment permissions for that page.
+ */
+static int
+elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
+                  uint64 load_bias, uint64 *low_vaddr, uint64 *high_vaddr)
+{
+    program_header_t ph;
+    uint64 low = MAXVA;
+    uint64 high = 0;
+    int have_load = 0;
+
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        uint64 seg_start;
+        uint64 seg_end;
+
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        if (ph.memsz < ph.filesz || ph.vaddr + ph.memsz < ph.vaddr ||
+            ph.off + ph.filesz < ph.off)
+            return -1;
+
+        seg_start = load_bias + ph.vaddr;
+        seg_end = seg_start + ph.memsz;
+        if (seg_end < seg_start || seg_end > MAXVA)
+            return -1;
+
+        for (uint64 va = PGROUNDDOWN(seg_start); va < PGROUNDUP(seg_end); va += PGSIZE)
+        {
+            pte_t *pte = walk(pt, va, 0);
+
+            if (pte != NULL && (*pte & PTE_V))
+                continue;
+            {
+                char *page = (char *)pmem_alloc_pages(1);
+                if (page == NULL)
+                    return -1;
+                memset(page, 0, PGSIZE);
+                if (mappages(pt, va, (uint64)page, PGSIZE,
+                             PTE_R | PTE_W | PTE_U) != 1)
+                {
+                    pmem_free_pages(page, 1);
+                    return -1;
+                }
+            }
+        }
+
+        /* Copy only the bytes belonging to this segment.  The surrounding
+         * parts of a page are already zero-filled and may belong to another
+         * PT_LOAD record. */
+        for (uint64 copied = 0; copied < ph.filesz; )
+        {
+            uint64 va = seg_start + copied;
+            uint64 page_off = va & (PGSIZE - 1);
+            uint64 n = MIN(PGSIZE - page_off, ph.filesz - copied);
+            uint64 pa = walkaddr(pt, PGROUNDDOWN(va));
+
+            if (pa == 0 || ip->i_op->read(ip, 0, pa + page_off,
+                                           ph.off + copied, n) != n)
+                return -1;
+            copied += n;
+        }
+
+        if (seg_start < low)
+            low = seg_start;
+        if (seg_end > high)
+            high = seg_end;
+        have_load = 1;
+    }
+
+    if (!have_load)
+        return -1;
+
+    /* First discard the temporary writable permissions. */
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        for (uint64 va = PGROUNDDOWN(load_bias + ph.vaddr);
+             va < PGROUNDUP(load_bias + ph.vaddr + ph.memsz); va += PGSIZE)
+        {
+            pte_t *pte = walk(pt, va, 0);
+            if (pte == NULL || !(*pte & PTE_V))
+                return -1;
+            *pte &= ~(PTE_R | PTE_W | PTE_X);
+        }
+    }
+
+    /* A writable RISC-V leaf must also be readable. */
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        int perm;
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        perm = flags_to_perm(ph.flags);
+#if defined RISCV
+        if (perm & PTE_W)
+            perm |= PTE_R;
+#endif
+        for (uint64 va = PGROUNDDOWN(load_bias + ph.vaddr);
+             va < PGROUNDUP(load_bias + ph.vaddr + ph.memsz); va += PGSIZE)
+            *walk(pt, va, 0) |= perm;
+    }
+    sfence_vma();
+    *low_vaddr = low;
+    *high_vaddr = PGROUNDUP(high);
+    return 0;
+}
+
 int is_sh_script(char *path);
 int exec(char *path, char **argv, char **env)
 {
@@ -117,7 +244,7 @@ int exec(char *path, char **argv, char **env)
     free_vma_list(p);                      ///< 清除进程原来映射的VMA空间
     vma_init(p);                           ///< 初始化VMA列表
     pgtbl_t new_pt = proc_pagetable(p);    ///< 给进程分配新的页表
-    uint64 low_vaddr = 0xffffffffffffffff; ///< 记录起始地址
+    uint64 low_vaddr = 0;
     uint64 sz = 0;
     uint64 load_bias = 0;
     uint64 at_phdr = 0;
@@ -131,7 +258,8 @@ int exec(char *path, char **argv, char **env)
         load_bias = 0x10000UL;
     }
     int i;
-    /* 加载程序段 （PT_LOAD类型）*/
+    /* Find interpreter and auxiliary-vector locations.  PT_LOAD records are
+     * established by elf_load_segments below as one coherent image. */
     for (i = 0, off = ehdr.phoff; i < ehdr.phnum; i++, off += sizeof(ph))
     {
         if (ip->i_op->read(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
@@ -152,57 +280,12 @@ int exec(char *path, char **argv, char **env)
         // {
         //     //< 本来想加载PHDR的，但是发现没有作用
         // }
-        if (ph.type != ELF_PROG_LOAD) //< DYNAMIC段已经在PT_LOAD被加载了
-            continue;
-        uint64 seg_vaddr = load_bias + ph.vaddr;
-        if (ph.memsz < ph.filesz)
-        {
-            bad_stage = "ph-memsz-filesz";
-            goto bad;
-        }
-        if (seg_vaddr + ph.memsz < seg_vaddr)
-        {
-            bad_stage = "ph-wrap";
-            goto bad;
-        }
-        if (seg_vaddr < low_vaddr) ///< 更新最低虚拟地址并扩展虚拟内存
-        {
-            if (seg_vaddr != 0)
-                uvm_grow(new_pt, sz, 0x100UL, flags_to_perm(ph.flags));
-            low_vaddr = seg_vaddr;
-        }
-
-#if DEBUG
-        printf("加载段 %d: 文件偏移 0x%lx, 大小 0x%lx, 虚拟地址 0x%lx, 权限标志: 0x%x\n", i, ph.off, ph.filesz, ph.vaddr, ph.flags);
-        int computed_perm = flags_to_perm(ph.flags);
-        printf("  计算出的页面权限: 0x%x (R=%d, W=%d, X=%d)\n",
-               computed_perm,
-               !!(computed_perm & PTE_R),
-               !!(computed_perm & PTE_W),
-               !!(computed_perm & PTE_X));
-#endif
-        uint64 sz1;
-        /* 扩展用户虚拟空间 */
-#if defined RISCV
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
-#else
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
-#endif
-        // if (uret != PGROUNDUP(ph.vaddr + ph.memsz))
-        //     goto bad;
-        sz = sz1;
-        uint margin_size = 0;
-        if ((seg_vaddr % PGSIZE) != 0) ///< 处理未对齐的段
-        {
-            margin_size = seg_vaddr % PGSIZE;
-        }
-        /* 加载段内容到内存中 */
-        if (loadseg(new_pt, PGROUNDDOWN(seg_vaddr), ip, PGROUNDDOWN(ph.off), ph.filesz + margin_size) < 0)
-        {
-            bad_stage = "loadseg";
-            goto bad;
-        }
-        sz = PGROUNDUP(sz1);
+    }
+    if (elf_load_segments(new_pt, ip, &ehdr, load_bias,
+                          &low_vaddr, &sz) < 0)
+    {
+        bad_stage = "load-program-segments";
+        goto bad;
     }
     if (at_phdr == 0)
         at_phdr = load_bias + ehdr.phoff;

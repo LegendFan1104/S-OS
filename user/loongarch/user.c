@@ -988,8 +988,6 @@ void run_final_scripts()
     cleanup_ltp_round("cagent-glibc");
     if (status != 0)
         printf("WARN cagent-serial exit=%d\n", status);
-
-    shutdown();
 }
 
 void run_buildstorm()
@@ -1004,8 +1002,6 @@ void run_buildstorm()
     cleanup_ltp_round("buildstorm-glibc");
     if (status != 0)
         printf("WARN buildstorm-glibc exit=%d\n", status);
-
-    shutdown();
 }
 
 void run_selected_profile()
@@ -1016,6 +1012,7 @@ void run_selected_profile()
     run_ltp_profile("/glibc", "ltp-glibc");
 #elif defined(TEST_PROFILE_BUILDSTORM)
     run_buildstorm();
+    shutdown();
 #elif defined(TEST_PROFILE_SUBMIT)
     run_submit();
 #else
@@ -1073,11 +1070,15 @@ void run_ltp_profile(const char *root_dir, const char *profile_name)
 void run_all()
 {
     run_final_scripts();
+    run_buildstorm();
+    shutdown();
 }
 
 void run_submit()
 {
     run_final_scripts();
+    run_buildstorm();
+    shutdown();
 }
 
 void run_ltp_curated_profile(const char *profile_name, char *cases[], char *const envp[])

@@ -56,6 +56,17 @@ uint64 get_buddy_addr(uint64 addr, int order)
     return addr ^ block_size;
 }
 
+/* A free block must have one live list entry.  Metadata and the bitmap can
+ * outlive that entry after a previous merge, so check the links before
+ * removing a buddy from a free list. */
+static bool
+buddy_elem_is_linked(struct list_elem *elem)
+{
+    if (elem == NULL || elem->prev == NULL || elem->next == NULL)
+        return false;
+    return elem->prev->next == elem && elem->next->prev == elem;
+}
+
 /**
  * @brief 检查位图中指定位置是否为空闲
  * @param addr 地址
@@ -441,6 +452,25 @@ void buddy_free(void *ptr, int order)
         {
             if (debug_buddy)
                 printf("buddy_free: buddy not available for merging\n");
+            break;
+        }
+
+        if (!buddy_elem_is_linked(&buddy_node->elem))
+        {
+            /* This block is free according to the allocator metadata but
+             * has no removable list entry.  A null/null element is safe to
+             * reinsert; other link corruption is left untouched so that a
+             * later allocator check can report it without dereferencing an
+             * invalid pointer here. */
+            if (buddy_node->elem.prev == NULL && buddy_node->elem.next == NULL)
+            {
+                list_push_front(&buddy_sys.free_lists[merge_order],
+                                &buddy_node->elem);
+            }
+            if (FINAL_DEV_DIAG)
+                printf("[diag][buddy-unlinked] addr=%p order=%d node=%p prev=%p next=%p\n",
+                       (void *)buddy_addr, merge_order, buddy_node,
+                       buddy_node->elem.prev, buddy_node->elem.next);
             break;
         }
 
