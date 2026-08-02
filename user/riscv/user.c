@@ -86,7 +86,7 @@ void cleanup_ltp_case(const char *profile_name, const char *case_name);
 void setup_dynamic_library();
 void run_final_scripts();
 int run_final_script(const char *script_name);
-int run_final_shell(const char *label, const char *script);
+int run_final_shell(const char *label, const char *script, char *const envp[]);
 int run_cagent_serial(void);
 void exe(char *path);
 static char *busybox_cmd[];
@@ -601,6 +601,14 @@ static char *final_submit_env[] = {
     0,
 };
 
+static char *buildstorm_env[] = {
+    "HOME=/",
+    "PATH=/root/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "LD_LIBRARY_PATH=/usr/lib/riscv64-linux-gnu:/usr/lib:/lib",
+    "TMPDIR=/tmp",
+    0,
+};
+
 int run_final_script(const char *script_name)
 {
     int pid, status;
@@ -640,7 +648,7 @@ int run_final_script(const char *script_name)
     return status;
 }
 
-int run_final_shell(const char *label, const char *script)
+int run_final_shell(const char *label, const char *script, char *const envp[])
 {
     int pid, status;
 
@@ -656,7 +664,7 @@ int run_final_shell(const char *label, const char *script)
         char *newargv[] = {"busybox", "sh", "-c", (char *)script, 0};
 
         sys_chdir("/glibc");
-        sys_execve("/musl/busybox", newargv, final_submit_env);
+        sys_execve("/musl/busybox", newargv, (char **)envp);
         printf("final shell exec failed: %s\n", label);
         exit(127);
     }
@@ -1013,8 +1021,6 @@ void run_final_scripts()
     if (FINAL_DEV_DIAG) print("FINAL pre-cleanup\n");
     cleanup_ltp_round("pre-final");
     if (FINAL_DEV_DIAG) print("FINAL post-cleanup\n");
-    setup_dynamic_library();
-    if (FINAL_DEV_DIAG) print("FINAL post-ldsetup\n");
     sys_chdir("/");
     if (FINAL_DEV_DIAG) print("FINAL before cagent\n");
 
@@ -1022,8 +1028,6 @@ void run_final_scripts()
     cleanup_ltp_round("cagent-glibc");
     if (status != 0)
         printf("WARN cagent-serial exit=%d\n", status);
-
-    shutdown();
 }
 
 void run_buildstorm()
@@ -1031,15 +1035,12 @@ void run_buildstorm()
     int status;
 
     cleanup_ltp_round("pre-buildstorm");
-    setup_dynamic_library();
     sys_chdir("/glibc");
 
-    status = run_final_shell("buildstorm-glibc", "./buildstorm_testcode.sh");
+    status = run_final_shell("buildstorm-glibc", "./buildstorm_testcode.sh", buildstorm_env);
     cleanup_ltp_round("buildstorm-glibc");
     if (status != 0)
         printf("WARN buildstorm-glibc exit=%d\n", status);
-
-    shutdown();
 }
 
 void run_selected_profile()
@@ -1051,7 +1052,7 @@ void run_selected_profile()
 #elif defined(TEST_PROFILE_PROBE)
     run_probe();
 #elif defined(TEST_PROFILE_BUILDSTORM)
-    run_buildstorm();
+    run_all();
 #elif defined(TEST_PROFILE_SUBMIT)
     run_submit();
 #else
@@ -1062,6 +1063,8 @@ void run_selected_profile()
 void run_submit()
 {
     run_final_scripts();
+    run_buildstorm();
+    shutdown();
 }
 
 void run_probe()
@@ -1156,6 +1159,8 @@ void run_ltp_curated_profile(const char *profile_name, char *cases[], char *cons
 void run_all()
 {
     run_final_scripts();
+    run_buildstorm();
+    shutdown();
 }
 
 static longtest busybox_setup_dynamic_library[] = {

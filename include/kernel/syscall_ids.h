@@ -73,6 +73,7 @@
 #define SYS_set_robust_list   99
 #define SYS_gettid   178
 #define SYS_tgkill   131
+#define SYS_sigaltstack 132
 #define SYS_prlimit64   261
 #define SYS_readlinkat   78
 #define SYS_getrandom  278
@@ -211,6 +212,7 @@ static inline const char* get_syscall_name(int num)
         case SYS_utimensat: return "utimensat";
         case SYS_futex: return "futex";
         case SYS_rt_sigaction: return "rt_sigaction";
+        case SYS_sigaltstack: return "sigaltstack";
         case SYS_rt_sigprocmask: return "rt_sigprocmask";
         case SYS_set_robust_list: return "set_robust_list";
         case SYS_gettid: return "gettid";
