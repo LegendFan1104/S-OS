@@ -15,6 +15,10 @@ struct pipe;
 #define FINAL_DEV_DIAG 0
 #endif
 
+#ifndef STACK_COPYOUT_DIAG
+#define STACK_COPYOUT_DIAG 0
+#endif
+
 // console.c
 void            chardev_init(void);
 void            consoleintr(int);

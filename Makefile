@@ -27,6 +27,8 @@ export CFLAGS += -fno-pie -no-pie
 export CFLAGS += -DDEBUG=0
 export FINAL_DEV_DIAG ?= 0
 export CFLAGS += -DFINAL_DEV_DIAG=$(FINAL_DEV_DIAG)
+export STACK_COPYOUT_DIAG ?= 0
+export CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export LDFLAGS = -z max-page-size=4096
 export WORKPATH = $(shell pwd)
 export BUILDPATH = $(WORKPATH)/build/loongarch#build/loongarch
@@ -249,6 +251,7 @@ export RISCV_CFLAGS += -mcmodel=medany
 export RISCV_CFLAGS += -mno-relax
 export RISCV_CFLAGS += -DDEBUG=0
 export RISCV_CFLAGS += -DFINAL_DEV_DIAG=$(FINAL_DEV_DIAG)
+export RISCV_CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export RISCV_LDFLAGS = -z max-page-size=4096
 
 export RISCV_CFLAGS += -DRISCV=1 #宏
