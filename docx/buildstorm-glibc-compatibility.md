@@ -46,9 +46,20 @@ the Rust path or cargo cache.
 - `growproc` now maps the complete requested `brk` expansion instead of only
   the first 64 KiB while advancing the logical size by the full amount.
 - `mmap` eagerly creates and zeroes anonymous pages. `MAP_FIXED` now replaces
-  page contents and R/W/X permissions even when the address belongs to an
-  existing reservation, as required by ld.so for BSS and TLS mappings.
+  an existing mapping through a precise VMA split/remove operation before
+  installing replacement pages. `munmap` uses the same range operation and
+  accepts unmapped holes as Linux does. This prevents a later unmap from
+  freeing an adjacent loader, BSS, or TLS page because of stale VMA metadata.
 - `mprotect` validates and replaces permissions, then flushes the RISC-V TLB.
+- RISC-V leaf PTE creation now sets the accessed bit explicitly and sets the
+  dirty bit for writable pages, rather than relying on the optional Svadu
+  hardware extension to update A/D state.
+- Added a conservative `riscv_hwprobe` implementation that reports no
+  optional ISA extensions, so recent glibc can select its baseline rv64gc
+  implementation without an unsupported-syscall path.
+- The RISC-V `struct stat` ABI now has its required 128-byte tail. `fstat`
+  also supplies valid metadata for terminal, pipe, and virtual-file handles
+  rather than failing for standard streams.
 - Removed the unaligned `0x10000036e` dynamic-linker workaround and its
   corresponding `uvmcopy` special case. It was not an ELF mapping and exposed
   a stale, uninitialised page at a page-rounded address.
@@ -61,10 +72,14 @@ load calculation. A bounded diagnostic boot also showed that `rustup` loads
 `libgcc_s`, `libpthread`, `libm`, `libdl`, and `libc`, completes relocation
 protection changes, and reaches the actual toolchain-selection path.
 
-The latest observed result still has a stack-protector abort in a dynamically
-linked Rust executable, so the 20-point BuildStorm environment check is not
-yet passed. The remaining investigation should focus on the dynamic loader's
-TLS/runtime state after relocation, not on shell paths or the disk image.
+The latest observed result still has a stack-protector abort in dynamically
+linked `/usr/bin/rm` and Rust executables after their dynamic libraries finish
+mapping and `brk` grows. cagent passes in the same boot. Therefore the
+20-point BuildStorm environment check is not yet passed. The remaining focus
+is the glibc runtime state after relocation, especially high-address mapping
+and TLS ownership across the loader's final transitions; it is not a shell
+path or disk-image lookup failure. The same failure remains after the
+`riscv_hwprobe` implementation, so that syscall is not the root cause.
 
 ## Reproduction
 

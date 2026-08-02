@@ -2862,6 +2862,37 @@ uint64 sys_getrandom(void *buf, uint64 buflen, unsigned int flags)
     return buflen;
 }
 
+struct riscv_hwprobe_pair
+{
+    int64 key;
+    uint64 value;
+};
+
+/*
+ * Report no optional ISA extensions.  Returning a successful baseline probe
+ * is preferable to exposing an ENOSYS path to recent glibc/rust binaries;
+ * rv64gc remains the guaranteed execution ISA of this kernel.
+ */
+uint64 sys_riscv_hwprobe(uint64 upairs, uint64 pair_count,
+                         uint64 cpu_count, uint64 cpus, uint64 flags)
+{
+    struct riscv_hwprobe_pair pair;
+
+    if (pair_count > 64 || flags != 0 || cpu_count != 0 || cpus != 0)
+        return -EINVAL;
+    for (uint64 i = 0; i < pair_count; i++)
+    {
+        if (copyin(myproc()->pagetable, (char *)&pair,
+                   upairs + i * sizeof(pair), sizeof(pair)) < 0)
+            return -EFAULT;
+        pair.value = 0;
+        if (copyout(myproc()->pagetable, upairs + i * sizeof(pair),
+                    (char *)&pair, sizeof(pair)) < 0)
+            return -EFAULT;
+    }
+    return 0;
+}
+
 /**
  * @brief 读取向量系统调用
  * @param fd 文件描述符
@@ -4557,6 +4588,9 @@ void syscall(struct trapframe *trapframe)
     case SYS_getrandom:
         ret = sys_getrandom((void *)a[0], (uint64)a[1], (uint64)a[2]);
         break;
+    case SYS_riscv_hwprobe:
+        ret = sys_riscv_hwprobe(a[0], a[1], a[2], a[3], a[4]);
+        break;
     case SYS_sendfile64:
         ret = sys_sendfile64((int)a[0], (int)a[1], (uint64 *)a[2], (uint64)a[3]);
         break;
@@ -4747,12 +4781,13 @@ void syscall(struct trapframe *trapframe)
             nr == SYS_faccessat || nr == SYS_statx || nr == SYS_fstatat ||
             nr == SYS_readlinkat)
         {
-            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
+            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld tp=%p a0=%p a1=%p a2=%p a3=%p\n",
                    p->pid,
                    p->main_thread ? p->main_thread->tid : -1,
                    nr,
                    get_syscall_name(nr),
                    ret,
+                   trapframe->tp,
                    a[0], a[1], a[2], a[3]);
         }
     }

@@ -439,7 +439,8 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         return NULL;
 
     mapped_len = PGROUNDUP((uint64)len);
-    if (mapped_len == 0 || start + mapped_len < start)
+    /* vma_init installs a zero-length upper-bound sentinel. */
+    if ((len > 0 && mapped_len == 0) || start + mapped_len < start)
         return NULL;
     if ((flags & MAP_FIXED) == 0)
     {
