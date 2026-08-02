@@ -660,15 +660,32 @@ filestat(struct file *f, uint64 addr)
 {
     struct proc *p = myproc();
     struct kstat st;
+    if (f == NULL)
+        return -EBADF;
+    memset(&st, 0, sizeof(st));
     if(f->f_type == FD_REG || f->f_type == FD_DEVICE)
     {
         int ret = vfs_ext4_fstat(f, &st);
-        if (ret < 0) return ret;
+        /* Character devices such as /dev/console have no ext4 inode. */
+        if (ret < 0 && f->f_type == FD_DEVICE)
+        {
+            st.st_mode = 0020000 | 0666;
+            st.st_blksize = PGSIZE;
+            ret = 0;
+        }
+        if (ret < 0)
+            return ret;
         if (copyout(p->pagetable, addr, (char *)(&st), sizeof(st)) < 0)
             return -EFAULT;
         return 0;
     }
-    return -1;
+    if (f->f_type == FD_PIPE || f->f_type == FD_BUSYBOX)
+    {
+        st.st_mode = (f->f_type == FD_PIPE ? 0010000 : 0100000) | 0666;
+        st.st_blksize = PGSIZE;
+        return copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0 ? -EFAULT : 0;
+    }
+    return -EBADF;
 }
 
 /**

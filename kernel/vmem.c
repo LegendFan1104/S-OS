@@ -229,8 +229,15 @@ int mappages(pgtbl_t pt, uint64 va, uint64 pa, uint64 len, uint64 perm)
             assert(0, "pte remap! va: %p", current);
             return -1;
         }
-        /*给页表项写上控制位，置有效*/
+        /* Give every RISC-V leaf an architecturally valid accessed state.
+         * Do not depend on optional hardware A/D bit updates (Svadu). */
+#if defined RISCV
+        *pte = PA2PTE(pa) | perm | PTE_V | PTE_A;
+        if (perm & PTE_W)
+            *pte |= PTE_D;
+#else
         *pte = PA2PTE(pa) | perm | PTE_V;
+#endif
 
         /// @todo : 刷新TLB
         if (current == end)
