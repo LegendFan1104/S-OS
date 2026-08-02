@@ -237,6 +237,8 @@ int mappages(pgtbl_t pt, uint64 va, uint64 pa, uint64 len, uint64 perm)
             *pte |= PTE_D;
 #else
         *pte = PA2PTE(pa) | perm | PTE_V;
+        if (perm & PTE_W)
+            *pte |= PTE_D;
 #endif
 
         /// @todo : 刷新TLB

@@ -144,7 +144,7 @@ init_la_dir:
 
 compile_all: 
 	$(MAKE) la -C user/loongarch
-	$(MAKE) -C hal/loongarch
+	$(MAKE) -C hal/loongarch QEMU=virt
 	$(MAKE) -C kernel
 	$(MAKE) -C hsai
 
@@ -340,6 +340,12 @@ submit-rv: clean
 
 probe-rv: clean
 	$(MAKE) __sbi TEST_PROFILE=probe-rv
+
+buildstorm-rv: clean
+	$(MAKE) __sbi TEST_PROFILE=buildstorm-rv
+
+buildstorm-la: clean
+	$(MAKE) la TEST_PROFILE=buildstorm-la
 
 	
 #不调试，直接运行

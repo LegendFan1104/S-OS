@@ -11,6 +11,22 @@
 #include "virt_la.h"
 #include "string.h"
 
+/*
+ * LoongArch 直接映射窗口:
+ *   DMWIN0 (0x9000...) 可缓存，CPU 正常访问 RAM 走这里
+ *   DMWIN1 (0x8000...) 非缓存(SO)，设备 DMA 与 CPU 共享 RAM 时走这里
+ * 设备 DMA 直接读写物理内存，绕开 CPU 缓存。因此 VirtIO 队列、请求结构、
+ * 状态字节和 DMA 缓冲都必须通过 DMWIN1 别名访问，避免 CPU 缓存中的旧数据
+ * 掩盖设备写入（DMA 读）或设备读到 CPU 缓存中的脏数据（DMA 写）。
+ */
+#define LA_DMW0_MASK 0x9000000000000000ULL
+#define LA_DMW1_MASK 0x8000000000000000ULL
+#define LA_UNCACHED(ptr) \
+    ((void *)(((uint64)(ptr) & ~LA_DMW0_MASK) | LA_DMW1_MASK))
+
+/* 独立的 DMA 缓冲：DMA 不直接访问 bcache 的 b->data，完成后再显式拷贝 */
+static uchar dma_buf[BSIZE] __attribute__((aligned(64)));
+
 //< 代表第一个设备，
 //< 有什么作用呢？
 unsigned char bus1;
@@ -372,7 +388,7 @@ void la_virtio_disk_init(void)
     /*先不考虑锁*/
     initlock(&disk.vdisk_lock, "virtio disk lock");
     virtio_pci_set_queue_size(&gs_virtio_blk_hw, 0, NUM);
-    memset(disk.pages, 0, sizeof(disk.pages));
+    memset(LA_UNCACHED(disk.pages), 0, sizeof(disk.pages));
     disk.desc = (struct VRingDesc *)disk.pages;
     disk.avail = (uint16 *)(((char *)disk.desc) + NUM * sizeof(struct VRingDesc));
     disk.used = (struct UsedArea *)(disk.pages + PGSIZE);
@@ -511,7 +527,21 @@ void la_virtio_disk_rw(struct buf *b, int write)
     // format the three descriptors.
     // qemu's virtio-blk.c reads them.
 
-    struct virtio_blk_req *buf0 = &disk.ops[idx[0]];
+    // 所有与设备共享的内存都通过 DMWIN1 非缓存别名访问
+    struct VRingDesc *desc = (struct VRingDesc *)LA_UNCACHED(disk.desc);
+    uint16 *avail = (uint16 *)LA_UNCACHED(disk.avail);
+    struct UsedArea *used = (struct UsedArea *)LA_UNCACHED(disk.used);
+    struct virtio_blk_req *buf0 =
+        (struct virtio_blk_req *)LA_UNCACHED(&disk.ops[idx[0]]);
+    volatile uint8 *status =
+        (volatile uint8 *)LA_UNCACHED(&disk.info[idx[0]].status);
+    struct buf **done_b =
+        (struct buf **)LA_UNCACHED(&disk.info[idx[0]].b);
+
+    // 写请求：先把数据显式拷入独立 DMA buffer，再交给设备
+    if (write)
+        memmove(LA_UNCACHED(dma_buf), b->data, BSIZE);
+
     if (write)
         buf0->type = VIRTIO_BLK_T_OUT; // write the disk
     else
@@ -519,44 +549,50 @@ void la_virtio_disk_rw(struct buf *b, int write)
     buf0->reserved = 0;
     buf0->sector = sector;
 
-    disk.desc[idx[0]].addr = PA2VA((uint64)buf0);
-    disk.desc[idx[0]].len = sizeof(*buf0);
-    disk.desc[idx[0]].flags = VRING_DESC_F_NEXT;
-    disk.desc[idx[0]].next = idx[1];
+    desc[idx[0]].addr = PA2VA((uint64)buf0);
+    desc[idx[0]].len = sizeof(*buf0);
+    desc[idx[0]].flags = VRING_DESC_F_NEXT;
+    desc[idx[0]].next = idx[1];
 
-    disk.desc[idx[1]].addr = PA2VA((uint64)b->data);
+    desc[idx[1]].addr = PA2VA((uint64)LA_UNCACHED(dma_buf));
 
-    disk.desc[idx[1]].len = BSIZE;
+    desc[idx[1]].len = BSIZE;
     if (write)
-        disk.desc[idx[1]].flags = 0; // device reads b->data
+        desc[idx[1]].flags = 0; // device reads dma_buf
     else
-        disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
-    disk.desc[idx[1]].flags |= VRING_DESC_F_NEXT;
-    disk.desc[idx[1]].next = idx[2];
+        desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes dma_buf
+    desc[idx[1]].flags |= VRING_DESC_F_NEXT;
+    desc[idx[1]].next = idx[2];
 
-    disk.info[idx[0]].status = 0xff; //< 磁盘读写成功会设为0
-    disk.desc[idx[2]].addr = PA2VA((uint64)&disk.info[idx[0]].status);
-    disk.desc[idx[2]].len = 1;
-    disk.desc[idx[2]].flags = VRING_DESC_F_WRITE; // device writes the status
-    disk.desc[idx[2]].next = 0;
+    *status = 0xff; //< 磁盘读写成功会设为0
+    desc[idx[2]].addr = PA2VA((uint64)status);
+    desc[idx[2]].len = 1;
+    desc[idx[2]].flags = VRING_DESC_F_WRITE; // device writes the status
+    desc[idx[2]].next = 0;
 
     // record struct buf for virtio_disk_intr().
     b->disk = 1;
-    disk.info[idx[0]].b = b;
+    *done_b = b;
 
     // avail[0] is flags
     // avail[1] tells the device how far to look in avail[2...].
     // avail[2...] are desc[] indices the device should process.
     // we only tell device the first index in our chain of descriptors.
-    disk.avail[2 + (disk.avail[1] % NUM)] = idx[0];
+    avail[2 + (avail[1] % NUM)] = idx[0];
     __sync_synchronize();
-    disk.avail[1] = disk.avail[1] + 1;
+    avail[1] = avail[1] + 1;
+    __sync_synchronize();
     virtio_pci_set_queue_notify(&gs_virtio_blk_hw, 0);
 
-    while (disk.used_idx == disk.used->id)
+    /* 忙等设备完成：状态字节由设备最后写入。
+     * 相比轮询 used->id，避免了首请求 used->id(0) 与 used_idx(0)
+     * 相等导致的未等待竞态。 */
+    while (*status == 0xff)
     {
     }
-    int id = disk.used->elems[disk.used_idx % NUM].id;
+    __sync_synchronize();
+
+    int id = used->elems[disk.used_idx % NUM].id;
 
     /*
      *下面代码块用于显示读写磁盘信息
@@ -567,13 +603,18 @@ void la_virtio_disk_rw(struct buf *b, int write)
      */
     if (id != idx[0])
         panic("virtio used mismatch");
-    if (disk.info[id].status != 0)
+    if (*status != 0)
         panic("virtio_disk_intr status");
-    if (disk.info[id].b == 0)
+    if (*done_b == 0)
         panic("virtio missing buf");
 
-    disk.info[id].b->disk = 0;
-    disk.info[id].b = 0;
+    (*done_b)->disk = 0;
+    *done_b = 0;
+
+    // 读请求：设备写完 dma_buf 后，显式拷回 bcache
+    if (!write)
+        memmove(b->data, LA_UNCACHED(dma_buf), BSIZE);
+
     //   if(write) printf("\n写请求!");
     // else printf("\n读请求!");
     //   printf("与磁盘交换的内容:\n");

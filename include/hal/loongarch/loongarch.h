@@ -64,6 +64,8 @@ w_csr_prmd(uint32 x)
 }
 
 #define FPE_ENABLE 1
+#define EUEN_LSXEN (1 << 1)  ///< LoongArch SIMD extension (128-bit) enable
+#define EUEN_LASXEN (1 << 2) ///< LoongArch SIMD extension (256-bit) enable
 static inline void 
 w_csr_euen(uint32 x) //< 扩展部件使能
 {
@@ -426,7 +428,12 @@ static inline void sfence_vma(void)
 
 //#define MAXVA (1L << (9 + 12 - 1)) //Lower half virtual address
 #define MAXVA (1ULL << (9 + 9 + 9 + 9 + 12 - 2)) // 0x4000 0000 0000
-#define MAXUVA                  0x80000000L
+/* LoongArch64 glibc/musl binaries use 0x120000000 as their ELF base
+ * (RISC-V uses 0x10000), so the 2 GiB cap leaves no room between the
+ * program image and the mmap region.  Allow a 64 GiB user space: the
+ * stack sits just below MAXUVA and anonymous/file mmaps start below
+ * USER_MMAP_START, both far above the largest static image. */
+#define MAXUVA                  0x1000000000UL
 #define USER_MMAP_START (MAXUVA - 0x10000000 -(2 * PGSIZE))
 #define USER_STACK_TOP MAXUVA - PGSIZE
 #define USER_STACK_DOWN USER_MMAP_START + PGSIZE

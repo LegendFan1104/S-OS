@@ -68,8 +68,10 @@ void hsai_trap_init(void)
     w_csr_merrentry((uint64)handle_merr);                       ///< 机器exception
     timer_init();                                               ///< 启动时钟中断
 
-    /*busybox需要开启浮点扩展*/
-    w_csr_euen(FPE_ENABLE);
+    /* LoongArch glibc (the gcc-13.2 sysroot copy shipped in /glibc/lib)
+     * uses FPU and LSX in hot paths such as memcpy; enable all SIMD
+     * extensions or those functions trap with FPE. */
+    w_csr_euen(FPE_ENABLE | EUEN_LSXEN | EUEN_LASXEN);
 #endif
 }
 
@@ -90,6 +92,23 @@ int pagefault_handler(uint64 addr)
 
     // +++ 关键修复：确保地址页面对齐 +++
     uint64 aligned_addr = PGROUNDDOWN(addr);
+
+    /* The page is already mapped.  LoongArch's software TLB walk raises PME
+     * when a store hits a writable page whose dirty bit is clear; mark the
+     * leaf dirty and retry.  A store to a present read-only leaf is a real
+     * protection violation. */
+    pte_t *cur_pte = walk(p->pagetable, aligned_addr, 0);
+    if (cur_pte != NULL && (*cur_pte & PTE_V))
+    {
+        if ((*cur_pte & PTE_W) == 0)
+        {
+            printf("[diag][pf-ro] pid=%d addr=%p pte=%p\n",
+                   p->pid, addr, *cur_pte);
+            return -1;
+        }
+        *cur_pte |= PTE_D;
+        return 0;
+    }
 
     if (addr <= p->sz)
     {
@@ -112,13 +131,74 @@ int pagefault_handler(uint64 addr)
             }
             else
             {
+#if defined RISCV
+                printf("[diag][pf-gap] pid=%d addr=%p epc=%p sz=%p\n",
+                       p->pid, addr, p->trapframe ? p->trapframe->epc : 0, p->sz);
+#else
+                printf("[diag][pf-gap] pid=%d addr=%p era=%p badi=%p sz=%p\n",
+                       p->pid, addr, p->trapframe ? p->trapframe->era : 0,
+                       r_csr_badi(), p->sz);
+                if (p->trapframe)
+                    printf("  tf: a0=%p sp=%p tp=%p ra=%p fp=%p s4=%p s5=%p s6=%p s7=%p t1=%p s8=%p\n",
+                           p->trapframe->a0, p->trapframe->sp,
+                           p->trapframe->tp, p->trapframe->ra,
+                           p->trapframe->fp,
+                           p->trapframe->s4, p->trapframe->s5,
+                           p->trapframe->s6, p->trapframe->s7,
+                           p->trapframe->t1, p->trapframe->s8);
+                if (p->trapframe && p->trapframe->s7)
+                {
+                    uint64 s7_page = PGROUNDDOWN(p->trapframe->s7);
+                    pte_t *s7p = walk(p->pagetable, s7_page, 0);
+                    uint64 s7_pa = s7p && (*s7p & PTE_V) ? PTE2PA(*s7p) : 0;
+                    printf("  s7 page=%p pte=%p pa=%p\n", s7_page,
+                           s7p ? *s7p : 0, s7_pa);
+                    if (s7_pa)
+                    {
+                        uint64 *m = (uint64 *)(s7_pa | dmwin_win0);
+                        uint64 off = p->trapframe->s7 - s7_page;
+                        printf("  s7 words: %p %p %p\n",
+                               m[off / 8], m[off / 8 + 1], m[off / 8 + 2]);
+                        printf("  s7 dump:");
+                        for (int i = 0; i < 64; i++)
+                        {
+                            if (i % 4 == 0)
+                                printf("\n  %p:", s7_page + (off & ~0x1fULL) + i * 8);
+                            printf(" %p", m[(off & ~0x1fULL) / 8 + i]);
+                        }
+                        printf("\n");
+                    }
+                }
+                struct vma *dv = p->vma;
+                if (dv)
+                {
+                    struct vma *it = dv->next;
+                    int n = 0;
+                    while (it != dv && n < 20)
+                    {
+                        printf("  vma[%d] %p-%p type=%d perm=0x%lx\n",
+                               n, it->addr, it->end, it->type, it->perm);
+                        it = it->next;
+                        n++;
+                    }
+                }
+#endif
                 return -1;
             }
         }
     }
     // 找到缺页对应的vma
     if (!flag)
+    {
+#if defined RISCV
+        printf("[diag][pf-fail] pid=%d addr=%p epc=%p sz=%p vma=%p\n",
+               p->pid, addr, p->trapframe ? p->trapframe->epc : 0, p->sz, p->vma);
+#else
+        printf("[diag][pf-fail] pid=%d addr=%p era=%p sz=%p vma=%p\n",
+               p->pid, addr, p->trapframe ? p->trapframe->era : 0, p->sz, p->vma);
+#endif
         return -1;
+    }
     // DEBUG_LOG_LEVEL(DEBUG, "pagefault addr:%p,p->sz:%p,alloc page num:%d\n", addr, p->sz, npages);
 
     char *pa;
@@ -140,7 +220,6 @@ int pagefault_handler(uint64 addr)
 
     // 确保分配的内存完全清零
     memset(pa, 0, npages * PGSIZE);
-    perm = PTE_R | PTE_W |PTE_X|PTE_D| PTE_U;
     pte_t *pte = walk(p->pagetable, aligned_addr, 0);
     if (pte && (*pte & PTE_V))
     {
@@ -686,10 +765,14 @@ void usertrap(void)
         syscall(trapframe);
     }
     else if (((r_csr_estat() & CSR_ESTAT_ECODE) >> 16 == 0x1 ||
-              (r_csr_estat() & CSR_ESTAT_ECODE) >> 16 == 0x2))
+              (r_csr_estat() & CSR_ESTAT_ECODE) >> 16 == 0x2 ||
+              (r_csr_estat() & CSR_ESTAT_ECODE) >> 16 == 0x4))
     {
         /*
-         * load page fault or store page fault
+         * load/store page fault or page modify exception.
+         * PME (0x4) is raised by the software TLB walk when a store hits a
+         * writable page whose dirty bit is clear; pagefault_handler() sets
+         * D and retries, or reports a protection violation.
          * check if the page fault is caused by stack growth
          */
         if (pagefault_handler(r_csr_badv()) < 0)

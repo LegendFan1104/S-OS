@@ -1002,6 +1002,10 @@ void exit(int exit_state)
     /* 禁止init进程退出 */
     if (p == initproc)
         panic("init exiting");
+    if (p->term_signal)
+        printf("[diag][exit-signal] pid=%d tid=%d sig=%d state=%d\n",
+               p->pid, p->main_thread ? p->main_thread->tid : -1,
+               p->term_signal, exit_state);
 
     /* 关掉所有打开的文件 */
     for (int fd = 0; fd < NOFILE; fd++)
