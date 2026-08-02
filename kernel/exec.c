@@ -1,4 +1,5 @@
 #include "elf.h"
+#include "errno-base.h"
 #include "defs.h"
 #include "types.h"
 #include "string.h"
@@ -39,7 +40,7 @@ static int elf_load_segments(pgtbl_t pt, struct inode *ip,
                              const elf_header_t *ehdr, uint64 load_bias,
                              uint64 *low_vaddr, uint64 *high_vaddr);
 void alloc_aux(uint64 *aux, uint64 atid, uint64 value);
-int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
+uint64 loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
 void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, uint64 aux[]);
 static uint64 load_interpreter(pgtbl_t pt, struct inode *ip, elf_header_t *interpreter);
 static int has_suffix(const char *path, const char *suffix);
@@ -148,7 +149,9 @@ elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
         }
     }
 
-    /* A writable RISC-V leaf must also be readable. */
+    /* A writable leaf must also carry the dirty bit: RISC-V requires D for
+     * stores, and LoongArch's software TLB refill uses D as the write
+     * permission (qemu software page-walk raises PME when D is clear). */
     for (int i = 0; i < ehdr->phnum; i++)
     {
         uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
@@ -162,6 +165,8 @@ elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
         if (perm & PTE_W)
             perm |= PTE_R;
 #endif
+        if (perm & PTE_W)
+            perm |= PTE_D;
         for (uint64 va = PGROUNDDOWN(load_bias + ph.vaddr);
              va < PGROUNDUP(load_bias + ph.vaddr + ph.memsz); va += PGSIZE)
             *walk(pt, va, 0) |= perm;
@@ -212,8 +217,9 @@ int exec(char *path, char **argv, char **env)
     /* 打开目标文件 */
     if ((ip = namei(path)) == NULL)
     {
-        printf("exec: fail to find file %s\n", path);
-        return -1;
+        if (FINAL_DEV_DIAG)
+            printf("exec: fail to find file %s\n", path);
+        return -ENOENT;
     }
     elf_header_t ehdr;
     program_header_t ph;
@@ -231,7 +237,7 @@ int exec(char *path, char **argv, char **env)
     if (ehdr.magic != ELF_MAGIC) ///< 判断是否为ELF文件
     {
         printf("错误:不是有效的ELF文件\n");
-        return -1;
+        return -ENOEXEC;
     }
 
     /* 准备新进程环境 */
@@ -315,7 +321,7 @@ int exec(char *path, char **argv, char **env)
             if ((ip = namei("/usr/lib/riscv64-linux-gnu/ld-linux-riscv64-lp64d.so.1")) == NULL)
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find interpreter: %s\n", interp_name);
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib/ld-musl-riscv64-sf.so.1") ||
@@ -324,7 +330,7 @@ int exec(char *path, char **argv, char **env)
             if ((ip = namei("lib/libc.so")) == NULL) ///< musl加载libc.so就行了
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for riscv musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib64/ld-musl-loongarch-lp64d.so.1")) //< la musl dynamic
@@ -332,15 +338,15 @@ int exec(char *path, char **argv, char **env)
             if ((ip = namei("lib/libc.so")) == NULL) ///< musl加载libc.so就行了
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for loongarch musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib64/ld-linux-loongarch-lp64d.so.1")) //< la glibc dynamic
         {
-            if ((ip = namei("lib/ld-linux-loongarch-lp64d.so.1")) == NULL) ///< 现在这个解释器加载动态库的时候有问题
+            if ((ip = namei("/glibc/lib/ld-linux-loongarch-lp64d.so.1")) == NULL) ///< 现在这个解释器加载动态库的时候有问题
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for loongarch musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else
@@ -358,7 +364,7 @@ int exec(char *path, char **argv, char **env)
         if (interpreter.magic != ELF_MAGIC) ///< 判断是否为ELF文件
         {
             printf("错误：不是有效的ELF文件\n");
-            return -1;
+            return -ENOEXEC;
         }
         interp_start_addr = load_interpreter(new_pt, ip, &interpreter); ///< 加载解释器
     }
@@ -623,9 +629,8 @@ int exec(char *path, char **argv, char **env)
     //< FUCK GLIBC!!!
 
 bad:
-    if (FINAL_DEV_DIAG)
-        printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
-               bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
+    printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
+           bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
     panic("exec error!\n");
     return -1;
 }
@@ -791,7 +796,7 @@ void alloc_aux(uint64 *aux, uint64 atid, uint64 value)
     aux[0]++;
 }
 
-int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux)
+uint64 loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux)
 {
     int argc = aux[0];
     if (!argc)

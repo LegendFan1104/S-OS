@@ -13,6 +13,22 @@
 // 全局伙伴系统实例
 buddy_system_t buddy_sys;
 
+/* Diagnostic: count currently free pages across all buddy orders. */
+uint64 pmem_free_pages_count(void)
+{
+    uint64 free = 0;
+    for (int order = 0; order <= BUDDY_MAX_ORDER; order++)
+    {
+        int count = 0;
+        struct list_elem *e;
+        for (e = list_begin(&buddy_sys.free_lists[order]);
+             e != list_end(&buddy_sys.free_lists[order]); e = list_next(e))
+            count++;
+        free += (uint64)count * ((uint64)1 << order);
+    }
+    return free;
+}
+
 // 内存起始和结束地址
 uint64 _mem_start, _mem_end;
 int debug_buddy = 0;
@@ -586,6 +602,8 @@ void *pmem_alloc_pages(int npages)
         if (!ptr)
         {
             DEBUG_LOG_LEVEL(DEBUG, "pmem_alloc_pages failed for %d pages (order %d)", npages, order);
+            printf("pmem_alloc_pages FAILED for %d pages (order %d), free=%lu/%lu\n",
+                   npages, order, pmem_free_pages_count(), buddy_sys.total_pages);
         }
         return ptr;
     }else{

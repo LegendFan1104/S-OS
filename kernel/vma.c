@@ -319,6 +319,10 @@ int vm_protect(pgtbl_t pagetable, uint64 va, uint64 addr, uint64 perm)
 #else
     *pte = (*pte & ~(PTE_W | PTE_NX | PTE_NR)) |
            (perm & (PTE_W | PTE_NX | PTE_NR));
+    /* LoongArch's software TLB refill treats D as the write permission:
+     * removing W must also clear D so the leaf stays read-only. */
+    if ((*pte & PTE_W) == 0)
+        *pte &= ~PTE_D;
 #endif
     return PTE2PA(*pte);
 }
@@ -331,10 +335,18 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
     uint64 mapped_len;
 
     if (len <= 0 || (fd != -1 && f == NULL))
+    {
+        printf("mmap BADARGS pid=%d len=%ld fd=%d prot=%d flags=0x%x\n",
+               p->pid, len, fd, prot, flags);
         return -1;
+    }
     struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
     if (vma == NULL)
+    {
+        printf("mmap ALLOCVMA FAILED pid=%d len=%ld free=%lu\n",
+               p->pid, len, pmem_free_pages_count());
         return -1;
+    }
     if (!(flags & MAP_FIXED))
         start = vma->addr;
     mapped_len = PGROUNDUP((uint64)len);
@@ -446,9 +458,22 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
     {
         if (mmap_choose_addr(p, mapped_len, &start) < 0)
         {
-            if (FINAL_DEV_DIAG)
-                printf("[diag][mmap-alloc-fail] pid=%d len=0x%lx sz=0x%lx flags=0x%x fd=%d\n",
-                       p->pid, mapped_len, p->sz, flags, fd);
+            printf("[diag][mmap-alloc-fail] pid=%d len=0x%lx sz=0x%lx flags=0x%x fd=%d lower=0x%lx upper=0x%lx\n",
+                   p->pid, mapped_len, p->sz, flags, fd,
+                   mmap_lower_bound(p), USER_MMAP_START);
+            struct vma *d = p->vma;
+            if (d)
+            {
+                struct vma *it = d->next;
+                int n = 0;
+                while (it != d && n < 16)
+                {
+                    printf("  vma[%d] %p-%p type=%d perm=0x%lx\n",
+                           n, it->addr, it->end, it->type, it->perm);
+                    it = it->next;
+                    n++;
+                }
+            }
             return NULL;
         }
     }

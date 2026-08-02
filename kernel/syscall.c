@@ -1355,9 +1355,19 @@ uint64 sys_brk(uint64 n)
     /* brk receives an absolute address.  Do not let unsigned subtraction
      * turn a shrink request into a huge signed allocation. */
     if (n < addr || n - addr > 0x7fffffffUL)
+    {
+        if (FINAL_DEV_DIAG)
+            printf("sys_brk NOGROW pid=%d n=%p addr=%p delta=%p free=%lu\n",
+                   myproc()->pid, n, addr, n >= addr ? n - addr : 0, pmem_free_pages_count());
         return addr;
+    }
     if (growproc((int)(n - addr)) < 0)
+    {
+        if (FINAL_DEV_DIAG)
+            printf("sys_brk FAILED pid=%d n=%p addr=%p grow=%p free=%lu\n",
+                   myproc()->pid, n, addr, n - addr, pmem_free_pages_count());
         return addr;
+    }
     return n;
 }
 
@@ -2304,7 +2314,8 @@ int sys_mount(const char *special, const char *dir, const char *fstype, unsigned
     }
     else
     {
-        printf("不支持的文件系统类型: %s\n", fstype_str);
+        if (FINAL_DEV_DIAG)
+            printf("不支持的文件系统类型: %s\n", fstype_str);
         return -1;
     }
 
@@ -4552,6 +4563,11 @@ void syscall(struct trapframe *trapframe)
 
     for (int i = 0; i < 8; i++)
         a[i] = hsai_get_arg(trapframe, i);
+#if !defined RISCV
+    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000)
+        printf("[diag][syscall] pid=%d nr=%lld a0=%p a1=%p a2=%p\n",
+               p->pid, (long long)a[7], a[0], a[1], a[2]);
+#endif
     long long ret = -1;
     switch (a[7])
     {
@@ -4927,6 +4943,13 @@ void syscall(struct trapframe *trapframe)
         ret = -ENOSYS;
     }
     }
+#if !defined RISCV
+    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000 &&
+        (a[7] == SYS_mmap || a[7] == SYS_brk || a[7] == SYS_clone ||
+         a[7] == SYS_mprotect || a[7] == SYS_munmap))
+        printf("[diag][sysret] pid=%d nr=%lld ret=%p a0=%p a1=%p\n",
+               p->pid, (long long)a[7], ret, a[0], a[1]);
+#endif
     if (FINAL_DEV_DIAG && p && p->pid == 1 && diag_init_syscall_count < 32)
     {
         printf("[diag][syscall] pid=%d nr=%d name=%s ret=%lld\n",

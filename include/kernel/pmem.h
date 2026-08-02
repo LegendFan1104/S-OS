@@ -36,6 +36,7 @@ void *kalloc(void);
 int buddy_init(uint64 start, uint64 end);
 void *buddy_alloc(int order);
 void buddy_free(void *ptr, int order);
+uint64 pmem_free_pages_count(void);
 int get_order(uint64 size);
 uint64 get_buddy_addr(uint64 addr, int order);
 int is_buddy_free(uint64 addr, int order);
