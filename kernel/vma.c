@@ -72,6 +72,121 @@ mmap_choose_addr(proc_t *p, uint64 len, uint64 *addr_out)
     return -1;
 }
 
+/*
+ * MAP_FIXED is used by ld.so to replace portions of an earlier reservation.
+ * Reusing an existing VMA must still replace the page contents and its access
+ * permissions, especially for anonymous BSS and TLS pages.
+ */
+static int
+mmap_prepare_page(proc_t *p, uint64 va, int perm)
+{
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    if (pte != NULL && (*pte & PTE_V) != 0)
+        return -1;
+
+    char *mem = (char *)pmem_alloc_pages(1);
+
+    if (mem == NULL)
+        return -1;
+    memset(mem, 0, PGSIZE);
+    if (mappages(p->pagetable, va, (uint64)mem, PGSIZE,
+                 perm | PTE_U | PTE_D) != 1)
+    {
+        pmem_free_pages(mem, 1);
+        return -1;
+    }
+    return 0;
+}
+
+static void
+vma_unlink_and_free(struct vma *vma)
+{
+    vma->prev->next = vma->next;
+    vma->next->prev = vma->prev;
+    pmem_free_pages(vma, 1);
+}
+
+/*
+ * Remove [start, end) from the VMA list.  The VMA list is the authority for
+ * ownership of user pages, so this operation must split mappings before any
+ * PTEs are freed.  ld.so relies on this for MAP_FIXED reservations.
+ */
+static int
+vma_remove_range(proc_t *p, uint64 start, uint64 end, int unmap_pages)
+{
+    struct vma *vma;
+    int removed = 0;
+
+    for (vma = p->vma->next; vma != p->vma; )
+    {
+        struct vma *next = vma->next;
+        uint64 cut_start, cut_end;
+        struct vma *left = NULL;
+        struct vma *right = NULL;
+
+        if (vma->end <= start || vma->addr >= end)
+        {
+            vma = next;
+            continue;
+        }
+
+        cut_start = vma->addr > start ? vma->addr : start;
+        cut_end = vma->end < end ? vma->end : end;
+        if (cut_start >= cut_end)
+        {
+            vma = next;
+            continue;
+        }
+
+        if (vma->addr < cut_start)
+        {
+            left = (struct vma *)pmem_alloc_pages(1);
+            if (left == NULL)
+                return -1;
+            *left = *vma;
+            left->end = cut_start;
+            left->size = cut_start - left->addr;
+        }
+        if (cut_end < vma->end)
+        {
+            right = (struct vma *)pmem_alloc_pages(1);
+            if (right == NULL)
+            {
+                if (left)
+                    pmem_free_pages(left, 1);
+                return -1;
+            }
+            *right = *vma;
+            right->addr = cut_end;
+            right->size = right->end - cut_end;
+            if (right->fd != -1)
+                right->f_off += cut_end - vma->addr;
+        }
+
+        if (left)
+        {
+            left->prev = vma->prev;
+            left->next = vma;
+            vma->prev->next = left;
+            vma->prev = left;
+        }
+        if (right)
+        {
+            right->prev = vma;
+            right->next = vma->next;
+            vma->next->prev = right;
+            vma->next = right;
+        }
+        if (unmap_pages)
+            vmunmap(p->pagetable, cut_start, (cut_end - cut_start) / PGSIZE, 1);
+        vma_unlink_and_free(vma);
+        removed = 1;
+        vma = next;
+    }
+    return removed;
+}
+
 struct vma *vma_init(struct proc *p)
 {
     struct vma *vma = (struct vma *)pmem_alloc_pages(1);
@@ -192,30 +307,46 @@ uint64 experm(pgtbl_t pagetable, uint64 va, uint64 perm)
 
 int vm_protect(pgtbl_t pagetable, uint64 va, uint64 addr, uint64 perm)
 {
-    return experm(pagetable, va, perm);
+    pte_t *pte;
+    if (va >= MAXVA)
+        return -1;
+    pte = walk(pagetable, va, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+        return -1;
+#if defined RISCV
+    *pte = (*pte & ~(PTE_R | PTE_W | PTE_X)) |
+           (perm & (PTE_R | PTE_W | PTE_X));
+#else
+    *pte = (*pte & ~(PTE_W | PTE_NX | PTE_NR)) |
+           (perm & (PTE_W | PTE_NX | PTE_NR));
+#endif
+    return PTE2PA(*pte);
 }
 
 uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
 {
     proc_t *p = myproc();
     int perm = get_mmapperms(prot);
-    // assert(start == 0, "uvm_mmap: 0");
-    //  assert(flags & MAP_PRIVATE, "uvm_mmap: 1");
-    // len += PGSIZE;
     struct file *f = fd == -1 ? NULL : p->ofile[fd];
+    uint64 mapped_len;
 
-    if (fd != -1 && f == NULL)
+    if (len <= 0 || (fd != -1 && f == NULL))
         return -1;
     struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
     if (vma == NULL)
         return -1;
     if (!(flags & MAP_FIXED))
         start = vma->addr;
+    mapped_len = PGROUNDUP((uint64)len);
+
     if (-1 == fd)
     {
+        for (uint64 i = 0; i < mapped_len; i += PGSIZE)
+            if (mmap_prepare_page(p, start + i, perm) < 0)
+                return -1;
         return start;
     }
-    assert(len, "len is zero!");
+
     uint64 i;
     uint64 file_size = 0;
 
@@ -225,34 +356,22 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
         file_size = efile->fsize;
     }
 
-    for (i = 0; i < len; i += PGSIZE) //< 从offset开始读len字节  //< ?为什么la glibc一进来i就是0x8c000
+    for (i = 0; i < mapped_len; i += PGSIZE)
     {
-        // LOG_LEVEL(LOG_ERROR,"[mmap] i=%x",i);
-        if ((flags & MAP_SHARED) && fd != -1)
-        {
-            pte_t *shared_pte = walk(p->pagetable, start + i, 0);
-            if (shared_pte == NULL || (*shared_pte & PTE_V) == 0)
-            {
-                char *shared_mem = (char *)pmem_alloc_pages(1);
-                if (shared_mem == NULL)
-                    return -1;
-                memset(shared_mem, 0, PGSIZE);
-                if (mappages(p->pagetable, start + i, (uint64)shared_mem, PGSIZE, perm | PTE_U | PTE_D) != 1)
-                {
-                    pmem_free_pages(shared_mem, 1);
-                    return -1;
-                }
-            }
-        }
-        uint64 pa = experm(p->pagetable, start + i, perm); //< 检查是否可以访问start + i，如果可以就返回start + i所在页的物理地址
-        if (pa == 0)
-            return -1;
-
-        int remaining = len - i;
-        int to_read = (remaining > PGSIZE) ? PGSIZE : remaining;
-
-        // 读取文件内容（如果 to_read > 0）
+        pte_t *pte;
+        uint64 pa;
+        int remaining;
+        int to_read;
         int bytes_read = 0;
+
+        if (mmap_prepare_page(p, start + i, perm) < 0)
+            return -1;
+        pte = walk(p->pagetable, start + i, 0);
+        pa = PTE2PA(*pte);
+
+        remaining = (int)((uint64)len - i);
+        to_read = (remaining > (int)PGSIZE) ? PGSIZE : remaining;
+
         if (to_read > 0)
         {
             int available = 0;
@@ -289,137 +408,24 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
             memset((void *)((pa + to_read) | dmwin_win0), 0, PGSIZE - to_read);
         }
     }
-    // if (aligned_len > len)
-    // {
-    //     size_t extra_len = aligned_len - len;
-    //     uint64 prot_start = start + len;
-    //     DEBUG_LOG_LEVEL(LOG_DEBUG, "Set PROT_NONE for extra pages: 0x%llx-0x%llx\n",
-    //                     prot_start, prot_start + extra_len);
-    //     vm_protect(p->pagetable, prot_start, extra_len, PROT_NONE);
-    // }
-    get_file_ops()->dup(f);
     return start;
 }
 
 int munmap(uint64 start, int len)
 {
     proc_t *p = myproc();
-    struct vma *vma = p->vma->next; // 从链表头部开始遍历
     uint64 end;
-    uint64 orig_start = start;
-    int found = 0;
 
-    // 参数合法性检查（需页对齐）
-    if (len <= 0)
-    {
-        return -1; // EINVAL
-    }
-    start = PGROUNDDOWN(start);
-    end = PGROUNDUP(orig_start + len);
+    if (len <= 0 || p == NULL || p->vma == NULL || (start & (PGSIZE - 1)))
+        return -1;
+    end = PGROUNDUP(start + (uint64)len);
     if (end <= start)
         return -1;
 
-    // 遍历所有VMA
-    while (vma != p->vma)
-    {
-        struct vma *next_vma = vma->next; // 在修改链表之前就保存下一个节点
-        uint64 vma_start = vma->addr;
-        uint64 vma_end = vma->end;
-
-        // 判断是否与当前VMA重叠
-        if (vma_end > start && vma_start <= end)
-        {
-            found = 1;
-            // 情况1：当前VMA完全在解除范围内
-            if (vma_start >= start && vma_end <= end)
-            {
-                // 释放物理内存和页表项
-                vmunmap(p->pagetable, vma_start, (vma_end - vma_start) / PGSIZE, 1);
-                // 从链表中移除VMA
-                vma->prev->next = vma->next;
-                vma->next->prev = vma->prev;
-                pmem_free_pages(vma, 1); // 释放VMA结构体
-            }
-            // 情况2：仅部分重叠（需分割VMA）
-            else if (vma_start < start || vma_end > end)
-            {
-                // 先移除原VMA，避免在创建新VMA时干扰链表结构
-                vma->prev->next = vma->next;
-                vma->next->prev = vma->prev;
-                
-                // 分割为前段和后段，中间部分解除映射
-                if (vma_start < start)
-                {
-                    // 创建前段VMA（保留start之前的区域）
-                    struct vma *new_front = (struct vma *)pmem_alloc_pages(1);
-                    if (new_front == NULL) {
-                        panic("munmap: failed to allocate front VMA");
-                        return -1;
-                    }
-                    
-                    // 复制原VMA的属性
-                    *new_front = *vma;
-                    new_front->addr = vma_start;
-                    new_front->end = start;
-                    new_front->size = start - vma_start;
-                    
-                    // 插入到原VMA的位置
-                    new_front->prev = vma->prev;
-                    new_front->next = vma->next;
-                    vma->prev->next = new_front;
-                    vma->next->prev = new_front;
-                }
-                
-                if (vma_end > end)
-                {
-                    // 创建后段VMA（保留end之后的区域）
-                    struct vma *new_back = (struct vma *)pmem_alloc_pages(1);
-                    if (new_back == NULL) {
-                        panic("munmap: failed to allocate back VMA");
-                        return -1;
-                    }
-                    
-                    // 复制原VMA的属性
-                    *new_back = *vma;
-                    new_back->addr = end;
-                    new_back->end = vma_end;
-                    new_back->size = vma_end - end;
-                    new_back->f_off = vma->f_off + (end - vma_start);
-                    
-                    // 插入到链表中
-                    if (vma_start < start) {
-                        // 如果前段存在，插入到前段之后
-                        struct vma *front = vma->prev->next; // 新创建的前段
-                        new_back->prev = front;
-                        new_back->next = front->next;
-                        front->next->prev = new_back;
-                        front->next = new_back;
-                    } else {
-                        // 如果前段不存在，插入到原位置
-                        new_back->prev = vma->prev;
-                        new_back->next = vma->next;
-                        vma->prev->next = new_back;
-                        vma->next->prev = new_back;
-                    }
-                }
-                
-                // 解除重叠部分的映射
-                uint64 unmap_start = (vma_start > start) ? vma_start : start;
-                uint64 unmap_end = (vma_end < end) ? vma_end : end;
-                if (unmap_end > unmap_start) {
-                    vmunmap(p->pagetable, unmap_start, (unmap_end - unmap_start) / PGSIZE, 1);
-                }
-                
-                // 释放原VMA
-                pmem_free_pages(vma, 1);
-            }
-        }
-        
-        // 移动到下一个VMA (使用之前保存的next_vma)
-        vma = next_vma;
-    }
-
-    return found ? 0 : -1; // 返回成功或失败
+    if (vma_remove_range(p, start, end, 1) > 0)
+        sfence_vma();
+    /* Linux treats unmapped holes in an otherwise valid munmap request as no-op. */
+    return 0;
 }
 
 struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, int perm, int fd, int offset)
@@ -433,6 +439,8 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         return NULL;
 
     mapped_len = PGROUNDUP((uint64)len);
+    if (mapped_len == 0 || start + mapped_len < start)
+        return NULL;
     if ((flags & MAP_FIXED) == 0)
     {
         if (mmap_choose_addr(p, mapped_len, &start) < 0)
@@ -448,13 +456,16 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         start = PGROUNDDOWN(start);
     }
 
-    int isalloc = 0;
-    if (flags & MAP_ALLOC)
-        isalloc = 1;
-    else if (fd != -1 && !(flags & MAP_SHARED))
-        isalloc = 1;
+    if (flags & MAP_FIXED)
+    {
+        /* Replacing a mapping invalidates both its PTEs and VMA ownership. */
+        if (vma_remove_range(p, start, start + mapped_len, 1) < 0)
+            return NULL;
+        sfence_vma();
+    }
 
-    vma = alloc_vma(p, MMAP, start, mapped_len, perm, isalloc, 0);
+    /* mmap() below owns page population for both anonymous and file mappings. */
+    vma = alloc_vma(p, MMAP, start, mapped_len, perm, 0, 0);
     if (vma == NULL)
     {
         if (FINAL_DEV_DIAG)

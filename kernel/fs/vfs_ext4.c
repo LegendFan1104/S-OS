@@ -753,6 +753,9 @@ vfs_ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *readbytes
 
     if (!strcmp(path, "/proc/self/exe"))
     {
+        proc_t *current = myproc();
+        if (current && current->exe_path[0])
+            virtual_target = current->exe_path;
         size_t len = strlen(virtual_target);
         if (len > bufsize)
             len = bufsize;

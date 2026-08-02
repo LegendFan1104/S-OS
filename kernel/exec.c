@@ -43,6 +43,7 @@ static int has_suffix(const char *path, const char *suffix);
 static void exec_parent_dir_from_path(const char *path, char *parent);
 static int resolve_exec_path(const char *path, char *resolved);
 static void exec_single_thread(proc_t *p);
+static void exec_reset_user_regs(struct trapframe *trapframe);
 static int exec_trace_once = 0;
 int is_sh_script(char *path);
 int exec(char *path, char **argv, char **env)
@@ -59,6 +60,9 @@ int exec(char *path, char **argv, char **env)
 
     if (resolve_exec_path(path, resolved_path) == 0)
         path = resolved_path;
+
+    if (FINAL_DEV_DIAG)
+        printf("[diag][exec] requested=%s resolved=%s\n", original_path, path);
 
     /* 脚本处理，如果是shell脚本，替换为busybox执行 */
     int is_shell_script = is_sh_script(path); ///< 判断路径是否为shell脚本
@@ -77,6 +81,7 @@ int exec(char *path, char **argv, char **env)
         argv = modified_argv;
         path = original_path;
     }
+    strcpy(myproc()->exe_path, path);
     /* 打开目标文件 */
     if ((ip = namei(path)) == NULL)
     {
@@ -224,7 +229,7 @@ int exec(char *path, char **argv, char **env)
         free_inode(ip);
         if (!strcmp((const char *)interp_name, "/lib/ld-linux-riscv64-lp64d.so.1")) //< rv glibc dynamic
         {
-            if ((ip = namei("lib/ld-linux-riscv64-lp64d.so.1")) == NULL) ///< 这个解释器要求/usr/lib下有libc.so.6  libm.so.6两个动态库
+            if ((ip = namei("/usr/lib/riscv64-linux-gnu/ld-linux-riscv64-lp64d.so.1")) == NULL)
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find interpreter: %s\n", interp_name);
                 return -1;
@@ -290,9 +295,6 @@ int exec(char *path, char **argv, char **env)
     alloc_vma_stack(p);             ///< 给进程分配栈空间
     uint64 sp = get_proc_sp(p);     ///< 获取栈指针
     uint64 stackbase = sp - USER_STACK_SIZE;
-#ifdef RISCV
-    mappages(p->pagetable, 0x000000010000036e, (uint64)pmem_alloc_pages(1), PGSIZE, PTE_R | PTE_W | PTE_X | PTE_U | PTE_D); //< 动态链接要访问这个地址，映射了能跑，但是功能不完全
-#endif
 
     /*-------------------------------   开始处理glibc环境    -----------------------------*/
     int redirection = -1;
@@ -477,6 +479,12 @@ int exec(char *path, char **argv, char **env)
         }
     }
 
+    /*
+     * exec starts a new user ABI context.  Keeping gp, ra, or saved
+     * registers from the old image is invalid and breaks position-independent
+     * glibc startup after an exec from BusyBox.
+     */
+    exec_reset_user_regs(p->trapframe);
     p->trapframe->a0 = ustack[0];
     p->trapframe->a1 = sp + sizeof(uint64);
     p->trapframe->a2 = sp + sizeof(uint64) * (ustack[0] + 2);
@@ -493,6 +501,8 @@ int exec(char *path, char **argv, char **env)
     p->trapframe->era = program_entry;
 #endif
     p->trapframe->sp = sp;
+    if (FINAL_DEV_DIAG && has_suffix(path, "rustup"))
+        debug_print_stack(new_pt, sp, ustack[0], estack[0], aux);
     if (!exec_trace_once && has_suffix(path, "abort01"))
     {
         exec_trace_once = 1;
@@ -550,6 +560,34 @@ static void exec_single_thread(proc_t *p)
     }
     p->thread_num = 1;
     release(&p->lock);
+}
+
+static void exec_reset_user_regs(struct trapframe *trapframe)
+{
+#if defined RISCV
+    trapframe->ra = 0;
+    trapframe->sp = 0;
+    trapframe->gp = 0;
+    trapframe->tp = 0;
+    trapframe->t0 = trapframe->t1 = trapframe->t2 = 0;
+    trapframe->s0 = trapframe->s1 = 0;
+    trapframe->a0 = trapframe->a1 = trapframe->a2 = trapframe->a3 = 0;
+    trapframe->a4 = trapframe->a5 = trapframe->a6 = trapframe->a7 = 0;
+    trapframe->s2 = trapframe->s3 = trapframe->s4 = trapframe->s5 = 0;
+    trapframe->s6 = trapframe->s7 = trapframe->s8 = trapframe->s9 = 0;
+    trapframe->s10 = trapframe->s11 = 0;
+    trapframe->t3 = trapframe->t4 = trapframe->t5 = trapframe->t6 = 0;
+#else
+    trapframe->ra = trapframe->tp = trapframe->sp = 0;
+    trapframe->a0 = trapframe->a1 = trapframe->a2 = trapframe->a3 = 0;
+    trapframe->a4 = trapframe->a5 = trapframe->a6 = trapframe->a7 = 0;
+    trapframe->t0 = trapframe->t1 = trapframe->t2 = trapframe->t3 = 0;
+    trapframe->t4 = trapframe->t5 = trapframe->t6 = trapframe->t7 = 0;
+    trapframe->t8 = trapframe->r21 = trapframe->fp = 0;
+    trapframe->s0 = trapframe->s1 = trapframe->s2 = trapframe->s3 = 0;
+    trapframe->s4 = trapframe->s5 = trapframe->s6 = trapframe->s7 = 0;
+    trapframe->s8 = 0;
+#endif
 }
 
 static int has_suffix(const char *path, const char *suffix)
@@ -887,8 +925,7 @@ void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, u
                         sp + i * sizeof(uint64), i);
         }
     }
-    sp += (envc) * sizeof(uint64);
-    sp += sp % 16;
+    sp += (envc + 1) * sizeof(uint64);
 
     // 4. 打印 auxv 数组
     int aux_index = 0;

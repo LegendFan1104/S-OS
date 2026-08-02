@@ -278,9 +278,17 @@ busybox_virtual_size(const char *path)
     if (!strcmp(path, "/proc/config.gz"))
         return 0;
     if (!strcmp(path, "/proc/self/maps"))
-        return 96;
+    {
+        proc_t *current = myproc();
+        const char *exe = (current && current->exe_path[0]) ? current->exe_path : "/busybox";
+        return strlen("00010000-0c000000 r-xp 00000000 00:00 0 ") +
+               strlen(exe) + strlen("\n7fff0000-80000000 rw-p 00000000 00:00 0 [stack]\n");
+    }
     if (!strcmp(path, "/proc/self/exe"))
-        return 8;
+    {
+        proc_t *current = myproc();
+        return (current && current->exe_path[0]) ? strlen(current->exe_path) : 8;
+    }
     if (!strcmp(path, "/proc/self/status"))
         return 256;
     if (!strcmp(path, "/proc/self/stat") || busybox_virtual_is_proc_stat_path(path))
@@ -545,6 +553,7 @@ check_access_mode(const struct kstat *st, int mode)
  */
 int sys_openat(int fd, const char *upath, int flags, uint16 mode)
 {
+    static int diag_open_ok_count;
     if (fd != AT_FDCWD && (fd < 0 || fd >= NOFILE))
         return -ENOENT;
     char path[MAXPATH];
@@ -606,6 +615,9 @@ int sys_openat(int fd, const char *upath, int flags, uint16 mode)
 
         if ((ret = vfs_ext4_openat(f)) < 0)
         {
+            if (FINAL_DEV_DIAG && p->pid != 1)
+                printf("[diag][openat-error] pid=%d path=%s abs=%s flags=0x%x ret=%d\n",
+                       p->pid, path, absolute_path, flags, ret);
             // printf("打开失败: %s (错误码: %d)\n", path, ret);
             /*
              *   以防万一有什么没有释放的东西，先留着
@@ -628,6 +640,12 @@ int sys_openat(int fd, const char *upath, int flags, uint16 mode)
             }
         }
         f->f_flags = saved_flags;
+        if (FINAL_DEV_DIAG && p->pid != 1 && diag_open_ok_count < 80)
+        {
+            printf("[diag][openat-ok] pid=%d path=%s type=%d fd=%d\n",
+                   p->pid, absolute_path, f->f_type, fd);
+            diag_open_ok_count++;
+        }
         /* @note 处理busybox的几个文件夹 */
         if (!strcmp(absolute_path, "/proc/mounts") ||  ///< df
             !strcmp(absolute_path, "/proc") ||         ///< ps
@@ -1161,8 +1179,12 @@ uint64 sys_brk(uint64 n)
     {
         return addr;
     }
-    if (growproc(n - addr) < 0)
-        return -1;
+    /* brk receives an absolute address.  Do not let unsigned subtraction
+     * turn a shrink request into a huge signed allocation. */
+    if (n < addr || n - addr > 0x7fffffffUL)
+        return addr;
+    if (growproc((int)(n - addr)) < 0)
+        return addr;
     return n;
 }
 
@@ -1369,6 +1391,9 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
         return -1;
     }
 
+    if (FINAL_DEV_DIAG)
+        printf("[diag][execve-request] pid=%d path=%s\n", p->pid, path);
+
 #if DEBUG
     LOG("[sys_execve] path:%s, uargv:%p, uenv:%p\n", path, uargv, uenvp);
 #endif
@@ -1412,21 +1437,9 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
     memset(envp, 0, sizeof(envp));
     uint64 uenv = 0;
     int env_count = 0;
-    const char *ld_path = "LD_LIBRARY_PATH=/glibc/lib:/musl/lib:";
 
-    // ========== 关键修改：添加 LD_LIBRARY_PATH ==========
-    // 首先添加预设的 LD_LIBRARY_PATH
-    envp[env_count] = pmem_alloc_pages(1);
-    if (!envp[env_count])
-    {
-        err = -ENOMEM;
-        goto bad;
-    }
-    memset(envp[env_count], 0, PGSIZE);
-    strncpy(envp[env_count], ld_path, PGSIZE - 1);
-    env_count++;
-
-    // 复制用户环境变量（跳过已存在的 LD_LIBRARY_PATH）
+    // Preserve the caller's environment verbatim.  In particular, glibc
+    // programs may need a toolchain-specific LD_LIBRARY_PATH.
     for (i = 0; uenvp; i++)
     {
         if (env_count >= NELEM(envp) - 1)
@@ -1457,13 +1470,6 @@ int sys_execve(const char *upath, uint64 uargv, uint64 uenvp)
             pmem_free_pages(env_str, 1);
             err = -EFAULT;
             goto bad;
-        }
-
-        // 跳过用户设置的 LD_LIBRARY_PATH
-        if (strncmp(env_str, "LD_LIBRARY_PATH=", 16) == 0)
-        {
-            pmem_free_pages(env_str, 1);
-            continue;
         }
 
         envp[env_count++] = env_str;
@@ -1762,6 +1768,9 @@ int sys_fstatat(int fd, uint64 upath, uint64 state, int flags)
         char *dirpath = (fd == AT_FDCWD) ? myproc()->cwd.path : myproc()->ofile[fd]->f_path;
         get_absolute_path(path, dirpath, absolute_path);
         normalize_proc_oom_score_adj_path(absolute_path);
+        if (FINAL_DEV_DIAG && myproc()->pid != 1)
+            printf("[diag][fstatat-path] pid=%d path=%s abs=%s flags=%d\n",
+                   myproc()->pid, path, absolute_path, flags);
         if (is_busybox_virtual_path(absolute_path))
         {
             struct kstat st;
@@ -1772,9 +1781,14 @@ int sys_fstatat(int fd, uint64 upath, uint64 state, int flags)
             return 0;
         }
         struct kstat st;
-        ret = vfs_ext4_stat(absolute_path, &st);
+        ret = (flags & AT_SYMLINK_NOFOLLOW)
+                  ? vfs_ext4_stat(absolute_path, &st)
+                  : stat_for_access(absolute_path, flags, &st);
         if (ret < 0)
             return ret;
+        if (FINAL_DEV_DIAG && myproc()->pid != 1)
+            printf("[diag][fstatat-stat] pid=%d abs=%s ret=%d mode=0x%x size=%ld\n",
+                   myproc()->pid, absolute_path, ret, st.st_mode, st.st_size);
         if (copyout(myproc()->pagetable, state, (char *)&st, sizeof(st)))
         {
             return -1;
@@ -2471,6 +2485,44 @@ uint64 sys_rt_sigprocmask(int how, uint64 uset, uint64 uoset)
     return 0;
 }
 
+struct linux_stack_t
+{
+    uint64 ss_sp;
+    int ss_flags;
+    int ss_pad;
+    uint64 ss_size;
+};
+
+uint64 sys_sigaltstack(uint64 uss, uint64 uoss)
+{
+    proc_t *p = myproc();
+    struct linux_stack_t old_stack;
+
+    if (uoss)
+    {
+        old_stack.ss_sp = p->sigaltstack_sp;
+        old_stack.ss_flags = p->sigaltstack_flags;
+        old_stack.ss_pad = 0;
+        old_stack.ss_size = p->sigaltstack_size;
+        if (copyout(p->pagetable, uoss, (char *)&old_stack, sizeof(old_stack)) < 0)
+            return -EFAULT;
+    }
+    if (uss)
+    {
+        struct linux_stack_t new_stack;
+        if (copyin(p->pagetable, (char *)&new_stack, uss, sizeof(new_stack)) < 0)
+            return -EFAULT;
+        if (new_stack.ss_flags & ~2)
+            return -EINVAL;
+        if (!(new_stack.ss_flags & 2) && new_stack.ss_size == 0)
+            return -ENOMEM;
+        p->sigaltstack_sp = new_stack.ss_sp;
+        p->sigaltstack_size = new_stack.ss_size;
+        p->sigaltstack_flags = new_stack.ss_flags;
+    }
+    return 0;
+}
+
 typedef struct kernel_sigaction_abi
 {
     uint64 sa_handler;
@@ -2545,8 +2597,9 @@ uint64 sys_faccessat(int fd, uint64 upath, int mode, int flags)
     memset(path, 0, MAXPATH);
     if (mode & ~(R_OK | W_OK | X_OK))
         return -EINVAL;
-    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EACCESS))
-        return -EINVAL;
+    /* glibc uses a compatibility bit when emulating faccessat2.  The
+     * permission check below does not need that bit's extra semantics. */
+    flags &= AT_SYMLINK_NOFOLLOW | AT_EACCESS;
     if (fd != AT_FDCWD && (fd < 0 || fd >= NOFILE || myproc()->ofile[fd] == 0))
         return -EBADF;
     if (copyinstr(myproc()->pagetable, path, upath, MAXPATH) == -1)
@@ -2953,7 +3006,7 @@ uint64 sys_lseek(uint32 fd, uint64 offset, int whence)
         else if (!strcmp(f->f_path, "/proc/cpuinfo"))
             size = 128;
         else if (!strcmp(f->f_path, "/proc/self/exe"))
-            size = 16;
+            size = busybox_virtual_size(f->f_path);
 
         switch (whence)
         {
@@ -3323,13 +3376,20 @@ uint64 sys_mprotect(uint64 start, uint64 len, uint64 prot)
 #endif
     struct proc *p = myproc();
     int perm = get_mmapperms(prot);
-    int page_n = PGROUNDUP(len) >> PGSHIFT;
-    uint64 va = start;
+    int page_n;
+    uint64 va;
+
+    if (len == 0 || start + len < start)
+        return -EINVAL;
+    va = PGROUNDDOWN(start);
+    page_n = (PGROUNDUP(start + len) - va) >> PGSHIFT;
     for (int i = 0; i < page_n; i++)
     {
-        experm(p->pagetable, va, perm);
+        if (vm_protect(p->pagetable, va, 0, perm) == 0)
+            return -ENOMEM;
         va += PGSIZE;
     }
+    sfence_vma();
     return 0;
 }
 
@@ -4084,40 +4144,56 @@ int sys_recvfrom(int sockfd, uint64 buf, int len, int flags, uint64 addr, uint64
  * @param new_limit set的源地址
  * @param old_limit get的源地址
  * @return uint64 标准错误码
- * @todo 目前只处理了RLIMIT_NOFILE
  */
 uint64
 sys_prlimit64(pid_t pid, int resource, uint64 new_limit, uint64 old_limit)
 {
-    const struct rlimit nl;
+    struct rlimit nl;
     struct rlimit ol;
     proc_t *p = myproc();
 
-    switch (resource)
+    if (pid != 0 && pid != p->pid)
+        return -ESRCH;
+
+    if (new_limit)
     {
-    case RLIMIT_NOFILE:
-    {
-        if (new_limit)
+        if (copyin(p->pagetable, (char *)&nl, new_limit, sizeof(nl)) < 0)
+            return -EFAULT;
+        if (resource == RLIMIT_NOFILE)
         {
-            DEBUG_LOG_LEVEL(LOG_DEBUG, "RLIMIT_NOFILE, cur %ul, max %ul\n", nl.rlim_cur, nl.rlim_max);
-            if (copyin(p->pagetable, (char *)&nl, new_limit, sizeof(nl)) < 0)
-                return -EFAULT;
             p->ofn.rlim_cur = nl.rlim_cur;
             p->ofn.rlim_max = nl.rlim_max;
         }
-        if (old_limit)
-        {
-            DEBUG_LOG_LEVEL(LOG_DEBUG, "RLIMIT_NOFILE, get\n");
-            ol.rlim_cur = p->ofn.rlim_cur;
-            ol.rlim_max = p->ofn.rlim_max;
-            if (copyout(p->pagetable, old_limit, (char *)&ol, sizeof(nl)) < 0)
-                return -EFAULT;
-        }
+    }
+
+    memset(&ol, 0, sizeof(ol));
+    switch (resource)
+    {
+    case RLIMIT_NOFILE:
+        ol = p->ofn;
+        break;
+    case RLIMIT_STACK:
+        ol.rlim_cur = 8ULL * 1024 * 1024;
+        ol.rlim_max = (rlim_t)-1;
+        break;
+    case RLIMIT_AS:
+    case RLIMIT_DATA:
+        ol.rlim_cur = (rlim_t)-1;
+        ol.rlim_max = (rlim_t)-1;
+        break;
+    case RLIMIT_CORE:
+    case RLIMIT_FSIZE:
+        ol.rlim_cur = 0;
+        ol.rlim_max = 0;
+        break;
+    default:
+        ol.rlim_cur = (rlim_t)-1;
+        ol.rlim_max = (rlim_t)-1;
         break;
     }
-    default:
-        DEBUG_LOG_LEVEL(LOG_DEBUG, "sys_prlimit64 parameter is %d\n", resource);
-    }
+
+    if (old_limit && copyout(p->pagetable, old_limit, (char *)&ol, sizeof(ol)) < 0)
+        return -EFAULT;
     return 0;
 }
 
@@ -4261,6 +4337,7 @@ void syscall(struct trapframe *trapframe)
 {
     proc_t *p = myproc();
     static int diag_init_syscall_count = 0;
+    static int diag_error_syscall_count = 0;
     uint64 a[8];
 
     for (int i = 0; i < 8; i++)
@@ -4453,6 +4530,9 @@ void syscall(struct trapframe *trapframe)
     case SYS_rt_sigaction:
         ret = sys_rt_sigaction((int)a[0], (const struct sigaction *)a[1], (struct sigaction *)a[2]);
         break;
+    case SYS_sigaltstack:
+        ret = sys_sigaltstack((uint64)a[0], (uint64)a[1]);
+        break;
     case SYS_faccessat:
         ret = sys_faccessat((int)a[0], (uint64)a[1], (int)a[2], (int)a[3]);
         break;
@@ -4643,6 +4723,14 @@ void syscall(struct trapframe *trapframe)
                ret);
         diag_init_syscall_count++;
     }
+    if (FINAL_DEV_DIAG && p && p->pid != 1 && ret < 0 &&
+        diag_error_syscall_count < 96)
+    {
+        printf("[diag][syscall-error] pid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
+               p->pid, (int)a[7], get_syscall_name((int)a[7]), ret,
+               a[0], a[1], a[2], a[3]);
+        diag_error_syscall_count++;
+    }
     if (FINAL_DEV_DIAG && p && p->pid != 1)
     {
         int nr = (int)a[7];
@@ -4651,10 +4739,13 @@ void syscall(struct trapframe *trapframe)
             nr == SYS_brk || nr == SYS_set_tid_address ||
             nr == SYS_set_robust_list || nr == SYS_exit ||
             nr == SYS_exit_group || nr == SYS_rt_sigaction ||
+            nr == SYS_sigaltstack ||
             nr == SYS_rt_sigprocmask || nr == SYS_getrandom ||
             nr == SYS_gettid || nr == SYS_socket ||
             nr == SYS_bind || nr == SYS_listen ||
-            nr == SYS_accept || nr == SYS_connect)
+            nr == SYS_accept || nr == SYS_connect ||
+            nr == SYS_faccessat || nr == SYS_statx || nr == SYS_fstatat ||
+            nr == SYS_readlinkat)
         {
             printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
                    p->pid,

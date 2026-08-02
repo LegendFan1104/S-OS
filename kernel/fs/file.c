@@ -132,6 +132,8 @@ busybox_virtual_is_dir(const char *path)
     return *p == '\0';
 }
 
+static int busybox_virtual_maps_diag_done;
+
 static void
 busybox_virtual_append_decimal(char *buf, int *pos, int value);
 
@@ -316,10 +318,8 @@ busybox_virtual_content(const char *path, uint64 *len)
         "rootfs / ext4 rw,relatime 0 0\n"
         "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n";
     static const char config_gz[] = "";
-    static const char self_maps[] =
-        "00400000-00401000 r-xp 00000000 00:00 0 /busybox\n"
-        "7fff0000-80000000 rw-p 00000000 00:00 0 [stack]\n";
-    static const char self_exe[] = "/busybox";
+    static char self_maps[1024];
+    static char self_exe[MAXPATH];
     static const char pid_max[] = "32768\n";
     static const char pipe_user_pages_soft[] = "16384\n";
     static const char rtc[] = "";
@@ -340,9 +340,19 @@ busybox_virtual_content(const char *path, uint64 *len)
     else if (!strcmp(path, "/proc/config.gz"))
         content = config_gz;
     else if (!strcmp(path, "/proc/self/maps"))
+    {
+        proc_t *current = myproc();
+        strcpy(self_maps, "00010000-0c000000 r-xp 00000000 00:00 0 ");
+        strcat(self_maps, (current && current->exe_path[0]) ? current->exe_path : "/busybox");
+        strcat(self_maps, "\n7fff0000-80000000 rw-p 00000000 00:00 0 [stack]\n");
         content = self_maps;
+    }
     else if (!strcmp(path, "/proc/self/exe"))
+    {
+        proc_t *current = myproc();
+        strcpy(self_exe, (current && current->exe_path[0]) ? current->exe_path : "/busybox");
         content = self_exe;
+    }
     else if (!strcmp(path, "/proc/self/status"))
         return busybox_virtual_proc_self_status(len);
     else if (!strcmp(path, "/proc/self/stat"))
@@ -403,6 +413,12 @@ busybox_virtual_read(struct file *f, uint64 addr, int n)
 {
     uint64 len = 0;
     const char *content = busybox_virtual_content(f->f_path, &len);
+    if (FINAL_DEV_DIAG && !strcmp(f->f_path, "/proc/self/maps") &&
+        !busybox_virtual_maps_diag_done)
+    {
+        busybox_virtual_maps_diag_done = 1;
+        printf("[diag][maps-read] len=%ld content=%s", len, content);
+    }
     int remain;
     int to_copy;
 

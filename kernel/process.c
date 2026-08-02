@@ -173,6 +173,10 @@ found:
     p->timer_active = 0;
     p->clear_child_tid = 0;
     p->ofn = (struct rlimit){NOFILE, NOFILE};
+    strcpy(p->exe_path, "/init");
+    p->sigaltstack_sp = 0;
+    p->sigaltstack_size = 0;
+    p->sigaltstack_flags = 2;
     // 初始化文件描述符数组
     for (int i = 0; i < NOFILE; i++)
         p->ofile[i] = 0;
@@ -810,6 +814,7 @@ uint64 fork(void)
 
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
+    strcpy(np->exe_path, p->exe_path);
     np->pgid = p->pgid;
     np->sid = p->sid;
     np->uid = p->uid;
@@ -884,6 +889,7 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
 
     np->cwd.fs = p->cwd.fs;
     strcpy(np->cwd.path, p->cwd.path);
+    strcpy(np->exe_path, p->exe_path);
     np->pgid = p->pgid;
     np->sid = p->sid;
     np->uid = p->uid;
@@ -1046,21 +1052,10 @@ int growproc(int n)
     {
         if (sz + n >= MAXVA - PGSIZE)
             return -1;
-        if (n >= 0x10000)
+        if ((sz = uvmalloc(p->pagetable, sz, sz + n,
+                           PTE_RW)) == 0)
         {
-            if ((sz = uvmalloc(p->pagetable, sz, sz + 0x10000,
-                               PTE_RW)) == 0)
-            {
-                return -1;
-            }
-        }
-        else
-        {
-            if ((sz = uvmalloc(p->pagetable, sz, sz + n,
-                               PTE_RW)) == 0)
-            {
-                return -1;
-            }
+            return -1;
         }
     }
     if (n < 0)
