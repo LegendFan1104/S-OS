@@ -602,9 +602,13 @@ static char *final_submit_env[] = {
 };
 
 static char *buildstorm_env[] = {
-    "HOME=/",
+    "HOME=/root",
     "PATH=/root/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     "LD_LIBRARY_PATH=/usr/lib/riscv64-linux-gnu:/usr/lib:/lib",
+    "RUSTUP_HOME=/root/.rustup",
+    "CARGO_HOME=/root/.cargo",
+    "RUSTUP_TOOLCHAIN=nightly-2026-05-28",
+    "CARGO_NET_OFFLINE=true",
     "TMPDIR=/tmp",
     0,
 };
