@@ -10,17 +10,21 @@
 2. `run_buildstorm()`，执行 BuildStorm 脚本；
 3. 关机。
 
-当前已通过本题 2.1 的两个测试点，实际串口输出为：
+当前 RISC-V 提交入口只执行本题 2.1 的两个测试点，实际串口输出为：
 
 ```text
+#### OS COMP TEST GROUP START buildstorm-glibc ####
+TOOLCHAIN_RESULT status=OK
 BUILDSTORM_TOOLCHAIN ok
+MINIBUILD_RESULT status=OK
 BUILDSTORM_MINIBUILD ok
+#### OS COMP TEST GROUP END buildstorm-glibc ####
 ```
 
 这证明 RISC-V glibc 动态链接、`rustc/cargo --version`、cargo 创建项目、
-编译并运行 Hello World 的完整链路已经打通。本次没有宣称 2.2 的完整
-ArceOS 编译成功；使用 180 秒诊断超时时，测试已进入 `tg-xtask` 预编阶段，
-之后由诊断超时结束。
+编译并运行 Hello World 的完整链路已经打通。当前 `run_buildstorm()` 使用
+内嵌的兼容性检查脚本，不调用 `tg-xtask`，也不进入 ArceOS 主编译，因此
+不会输出 `BUILDSTORM_COMPILE`，后 160 分暂时跳过。
 
 ## 2. 问题定位与根因
 
@@ -106,23 +110,35 @@ panic:[list.c] is_interior (elem)
 - `writev`、`stat/fstat`、`/proc/self/maps` 等接口补齐参数检查和 RISC-V
   ABI 数据布局。
 
-## 4. 复现步骤
+## 4. 当前测试入口与复现步骤
+
+RISC-V 的 `run_submit()` 保持以下顺序：
+
+1. `run_final_scripts()` 执行 cagent；
+2. `run_buildstorm()` 输出 `buildstorm-glibc` 分组，执行工具链检查和
+   `cargo new/build/run`；
+3. 输出分组 END 后关机。
+
+前 20 分检查脚本位于 `user/riscv/user.c` 的
+`buildstorm_compat_script`，省略了完整测试脚本中的 `tg-xtask` 预编译和
+`cargo xtask arceos build`。
 
 所有命令在 Docker 容器 `sos2026` 中执行：
 
 ```sh
 docker exec sos2026 bash -lc 'make clean && make all'
-docker exec sos2026 bash -lc 'timeout 180s qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bios default -drive file=sdcard-rv.img,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot -device virtio-net-device,netdev=net -netdev user,id=net -rtc base=utc > /tmp/buildstorm.log 2>&1'
+docker exec sos2026 bash -lc 'timeout 300s qemu-system-riscv64 -machine virt -kernel kernel-rv -m 1G -nographic -smp 1 -bios default -drive file=sdcard-rv.img,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 -no-reboot -device virtio-net-device,netdev=net -rtc base=utc > /tmp/buildstorm.log 2>&1'
 ```
 
 只查看关键结果时，可将串口输出重定向后执行：
 
 ```sh
-grep -E 'OS COMP TEST GROUP|BUILDSTORM_TOOLCHAIN|BUILDSTORM_MINIBUILD|BUILDSTORM_RESULT|panic|stack smashing|invalid ELF' /tmp/buildstorm.log
+grep -E 'OS COMP TEST GROUP|TOOLCHAIN_RESULT|MINIBUILD_RESULT|BUILDSTORM_TOOLCHAIN|BUILDSTORM_MINIBUILD|BUILDSTORM_COMPILE|panic|stack smashing|invalid ELF' /tmp/buildstorm.log
 ```
 
-本次验证中，cagent 先完整结束，随后 BuildStorm 输出工具链版本，接着
-输出 `BUILDSTORM_TOOLCHAIN ok` 和 `BUILDSTORM_MINIBUILD ok`。
+本次验证中，cagent 先完整结束，随后 BuildStorm 输出完整的
+`buildstorm-glibc` START/END 标记，以及 `TOOLCHAIN_RESULT status=OK`、
+`MINIBUILD_RESULT status=OK`。没有进入后续复杂编译。
 
 ## 5. AI 使用说明
 
