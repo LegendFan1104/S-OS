@@ -99,11 +99,15 @@ typedef struct proc
 
     struct file *ofile[NOFILE];
     struct file_vnode cwd;
+    char exe_path[MAXPATH];
     struct rlimit ofn;
 
     __sigset_t sig_set;
     sigaction sigaction[SIGRTMAX + 1];
     __sigset_t sig_pending;
+    uint64 sigaltstack_sp;
+    uint64 sigaltstack_size;
+    int sigaltstack_flags;
 } proc_t;
 
 typedef struct start_args_t

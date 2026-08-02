@@ -1,4 +1,5 @@
 #include "elf.h"
+#include "errno-base.h"
 #include "defs.h"
 #include "types.h"
 #include "string.h"
@@ -35,15 +36,147 @@ enum redir
 #define EXEC_MAX_SYMLINKS 8
 static int flags_to_perm(int flags);
 static int loadseg(pgtbl_t pt, uint64 va, struct inode *ip, uint offset, uint sz);
+static int elf_load_segments(pgtbl_t pt, struct inode *ip,
+                             const elf_header_t *ehdr, uint64 load_bias,
+                             uint64 *low_vaddr, uint64 *high_vaddr);
 void alloc_aux(uint64 *aux, uint64 atid, uint64 value);
-int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
+uint64 loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux);
 void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, uint64 aux[]);
 static uint64 load_interpreter(pgtbl_t pt, struct inode *ip, elf_header_t *interpreter);
 static int has_suffix(const char *path, const char *suffix);
 static void exec_parent_dir_from_path(const char *path, char *parent);
 static int resolve_exec_path(const char *path, char *resolved);
 static void exec_single_thread(proc_t *p);
+static void exec_reset_user_regs(struct trapframe *trapframe);
 static int exec_trace_once = 0;
+
+/*
+ * Establish a complete ELF image before returning to user mode.  PT_LOAD
+ * records may share a page and PIE images do not start at virtual address
+ * zero, so treating every record as an independent uvm_grow() interval is
+ * not valid.  The loader maps each page once, copies exactly p_filesz bytes,
+ * and only then applies the union of the segment permissions for that page.
+ */
+static int
+elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
+                  uint64 load_bias, uint64 *low_vaddr, uint64 *high_vaddr)
+{
+    program_header_t ph;
+    uint64 low = MAXVA;
+    uint64 high = 0;
+    int have_load = 0;
+
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        uint64 seg_start;
+        uint64 seg_end;
+
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        if (ph.memsz < ph.filesz || ph.vaddr + ph.memsz < ph.vaddr ||
+            ph.off + ph.filesz < ph.off)
+            return -1;
+
+        seg_start = load_bias + ph.vaddr;
+        seg_end = seg_start + ph.memsz;
+        if (seg_end < seg_start || seg_end > MAXVA)
+            return -1;
+
+        for (uint64 va = PGROUNDDOWN(seg_start); va < PGROUNDUP(seg_end); va += PGSIZE)
+        {
+            pte_t *pte = walk(pt, va, 0);
+
+            if (pte != NULL && (*pte & PTE_V))
+                continue;
+            {
+                char *page = (char *)pmem_alloc_pages(1);
+                if (page == NULL)
+                    return -1;
+                memset(page, 0, PGSIZE);
+                if (mappages(pt, va, (uint64)page, PGSIZE,
+                             PTE_R | PTE_W | PTE_U) != 1)
+                {
+                    pmem_free_pages(page, 1);
+                    return -1;
+                }
+            }
+        }
+
+        /* Copy only the bytes belonging to this segment.  The surrounding
+         * parts of a page are already zero-filled and may belong to another
+         * PT_LOAD record. */
+        for (uint64 copied = 0; copied < ph.filesz; )
+        {
+            uint64 va = seg_start + copied;
+            uint64 page_off = va & (PGSIZE - 1);
+            uint64 n = MIN(PGSIZE - page_off, ph.filesz - copied);
+            uint64 pa = walkaddr(pt, PGROUNDDOWN(va));
+
+            if (pa == 0 || ip->i_op->read(ip, 0, pa + page_off,
+                                           ph.off + copied, n) != n)
+                return -1;
+            copied += n;
+        }
+
+        if (seg_start < low)
+            low = seg_start;
+        if (seg_end > high)
+            high = seg_end;
+        have_load = 1;
+    }
+
+    if (!have_load)
+        return -1;
+
+    /* First discard the temporary writable permissions. */
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        for (uint64 va = PGROUNDDOWN(load_bias + ph.vaddr);
+             va < PGROUNDUP(load_bias + ph.vaddr + ph.memsz); va += PGSIZE)
+        {
+            pte_t *pte = walk(pt, va, 0);
+            if (pte == NULL || !(*pte & PTE_V))
+                return -1;
+            *pte &= ~(PTE_R | PTE_W | PTE_X);
+        }
+    }
+
+    /* A writable leaf must also carry the dirty bit: RISC-V requires D for
+     * stores, and LoongArch's software TLB refill uses D as the write
+     * permission (qemu software page-walk raises PME when D is clear). */
+    for (int i = 0; i < ehdr->phnum; i++)
+    {
+        uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
+        int perm;
+        if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
+            return -1;
+        if (ph.type != ELF_PROG_LOAD)
+            continue;
+        perm = flags_to_perm(ph.flags);
+#if defined RISCV
+        if (perm & PTE_W)
+            perm |= PTE_R;
+#endif
+        if (perm & PTE_W)
+            perm |= PTE_D;
+        for (uint64 va = PGROUNDDOWN(load_bias + ph.vaddr);
+             va < PGROUNDUP(load_bias + ph.vaddr + ph.memsz); va += PGSIZE)
+            *walk(pt, va, 0) |= perm;
+    }
+    sfence_vma();
+    *low_vaddr = low;
+    *high_vaddr = PGROUNDUP(high);
+    return 0;
+}
+
 int is_sh_script(char *path);
 int exec(char *path, char **argv, char **env)
 {
@@ -59,6 +192,9 @@ int exec(char *path, char **argv, char **env)
 
     if (resolve_exec_path(path, resolved_path) == 0)
         path = resolved_path;
+
+    if (FINAL_DEV_DIAG)
+        printf("[diag][exec] requested=%s resolved=%s\n", original_path, path);
 
     /* 脚本处理，如果是shell脚本，替换为busybox执行 */
     int is_shell_script = is_sh_script(path); ///< 判断路径是否为shell脚本
@@ -77,11 +213,13 @@ int exec(char *path, char **argv, char **env)
         argv = modified_argv;
         path = original_path;
     }
+    strcpy(myproc()->exe_path, path);
     /* 打开目标文件 */
     if ((ip = namei(path)) == NULL)
     {
-        printf("exec: fail to find file %s\n", path);
-        return -1;
+        if (FINAL_DEV_DIAG)
+            printf("exec: fail to find file %s\n", path);
+        return -ENOENT;
     }
     elf_header_t ehdr;
     program_header_t ph;
@@ -99,7 +237,7 @@ int exec(char *path, char **argv, char **env)
     if (ehdr.magic != ELF_MAGIC) ///< 判断是否为ELF文件
     {
         printf("错误:不是有效的ELF文件\n");
-        return -1;
+        return -ENOEXEC;
     }
 
     /* 准备新进程环境 */
@@ -112,7 +250,7 @@ int exec(char *path, char **argv, char **env)
     free_vma_list(p);                      ///< 清除进程原来映射的VMA空间
     vma_init(p);                           ///< 初始化VMA列表
     pgtbl_t new_pt = proc_pagetable(p);    ///< 给进程分配新的页表
-    uint64 low_vaddr = 0xffffffffffffffff; ///< 记录起始地址
+    uint64 low_vaddr = 0;
     uint64 sz = 0;
     uint64 load_bias = 0;
     uint64 at_phdr = 0;
@@ -126,7 +264,8 @@ int exec(char *path, char **argv, char **env)
         load_bias = 0x10000UL;
     }
     int i;
-    /* 加载程序段 （PT_LOAD类型）*/
+    /* Find interpreter and auxiliary-vector locations.  PT_LOAD records are
+     * established by elf_load_segments below as one coherent image. */
     for (i = 0, off = ehdr.phoff; i < ehdr.phnum; i++, off += sizeof(ph))
     {
         if (ip->i_op->read(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
@@ -147,57 +286,12 @@ int exec(char *path, char **argv, char **env)
         // {
         //     //< 本来想加载PHDR的，但是发现没有作用
         // }
-        if (ph.type != ELF_PROG_LOAD) //< DYNAMIC段已经在PT_LOAD被加载了
-            continue;
-        uint64 seg_vaddr = load_bias + ph.vaddr;
-        if (ph.memsz < ph.filesz)
-        {
-            bad_stage = "ph-memsz-filesz";
-            goto bad;
-        }
-        if (seg_vaddr + ph.memsz < seg_vaddr)
-        {
-            bad_stage = "ph-wrap";
-            goto bad;
-        }
-        if (seg_vaddr < low_vaddr) ///< 更新最低虚拟地址并扩展虚拟内存
-        {
-            if (seg_vaddr != 0)
-                uvm_grow(new_pt, sz, 0x100UL, flags_to_perm(ph.flags));
-            low_vaddr = seg_vaddr;
-        }
-
-#if DEBUG
-        printf("加载段 %d: 文件偏移 0x%lx, 大小 0x%lx, 虚拟地址 0x%lx, 权限标志: 0x%x\n", i, ph.off, ph.filesz, ph.vaddr, ph.flags);
-        int computed_perm = flags_to_perm(ph.flags);
-        printf("  计算出的页面权限: 0x%x (R=%d, W=%d, X=%d)\n",
-               computed_perm,
-               !!(computed_perm & PTE_R),
-               !!(computed_perm & PTE_W),
-               !!(computed_perm & PTE_X));
-#endif
-        uint64 sz1;
-        /* 扩展用户虚拟空间 */
-#if defined RISCV
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
-#else
-        sz1 = uvm_grow(new_pt, PGROUNDDOWN(seg_vaddr), seg_vaddr + ph.memsz, flags_to_perm(ph.flags));
-#endif
-        // if (uret != PGROUNDUP(ph.vaddr + ph.memsz))
-        //     goto bad;
-        sz = sz1;
-        uint margin_size = 0;
-        if ((seg_vaddr % PGSIZE) != 0) ///< 处理未对齐的段
-        {
-            margin_size = seg_vaddr % PGSIZE;
-        }
-        /* 加载段内容到内存中 */
-        if (loadseg(new_pt, PGROUNDDOWN(seg_vaddr), ip, PGROUNDDOWN(ph.off), ph.filesz + margin_size) < 0)
-        {
-            bad_stage = "loadseg";
-            goto bad;
-        }
-        sz = PGROUNDUP(sz1);
+    }
+    if (elf_load_segments(new_pt, ip, &ehdr, load_bias,
+                          &low_vaddr, &sz) < 0)
+    {
+        bad_stage = "load-program-segments";
+        goto bad;
     }
     if (at_phdr == 0)
         at_phdr = load_bias + ehdr.phoff;
@@ -224,10 +318,10 @@ int exec(char *path, char **argv, char **env)
         free_inode(ip);
         if (!strcmp((const char *)interp_name, "/lib/ld-linux-riscv64-lp64d.so.1")) //< rv glibc dynamic
         {
-            if ((ip = namei("lib/ld-linux-riscv64-lp64d.so.1")) == NULL) ///< 这个解释器要求/usr/lib下有libc.so.6  libm.so.6两个动态库
+            if ((ip = namei("/usr/lib/riscv64-linux-gnu/ld-linux-riscv64-lp64d.so.1")) == NULL)
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find interpreter: %s\n", interp_name);
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib/ld-musl-riscv64-sf.so.1") ||
@@ -236,7 +330,7 @@ int exec(char *path, char **argv, char **env)
             if ((ip = namei("lib/libc.so")) == NULL) ///< musl加载libc.so就行了
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for riscv musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib64/ld-musl-loongarch-lp64d.so.1")) //< la musl dynamic
@@ -244,15 +338,15 @@ int exec(char *path, char **argv, char **env)
             if ((ip = namei("lib/libc.so")) == NULL) ///< musl加载libc.so就行了
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for loongarch musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else if (!strcmp((const char *)interp_name, "/lib64/ld-linux-loongarch-lp64d.so.1")) //< la glibc dynamic
         {
-            if ((ip = namei("lib/ld-linux-loongarch-lp64d.so.1")) == NULL) ///< 现在这个解释器加载动态库的时候有问题
+            if ((ip = namei("/glibc/lib/ld-linux-loongarch-lp64d.so.1")) == NULL) ///< 现在这个解释器加载动态库的时候有问题
             {
                 LOG_LEVEL(LOG_ERROR, "exec: fail to find libc.so for loongarch musl\n");
-                return -1;
+                return -ENOENT;
             }
         }
         else
@@ -270,7 +364,7 @@ int exec(char *path, char **argv, char **env)
         if (interpreter.magic != ELF_MAGIC) ///< 判断是否为ELF文件
         {
             printf("错误：不是有效的ELF文件\n");
-            return -1;
+            return -ENOEXEC;
         }
         interp_start_addr = load_interpreter(new_pt, ip, &interpreter); ///< 加载解释器
     }
@@ -290,9 +384,6 @@ int exec(char *path, char **argv, char **env)
     alloc_vma_stack(p);             ///< 给进程分配栈空间
     uint64 sp = get_proc_sp(p);     ///< 获取栈指针
     uint64 stackbase = sp - USER_STACK_SIZE;
-#ifdef RISCV
-    mappages(p->pagetable, 0x000000010000036e, (uint64)pmem_alloc_pages(1), PGSIZE, PTE_R | PTE_W | PTE_X | PTE_U | PTE_D); //< 动态链接要访问这个地址，映射了能跑，但是功能不完全
-#endif
 
     /*-------------------------------   开始处理glibc环境    -----------------------------*/
     int redirection = -1;
@@ -477,6 +568,12 @@ int exec(char *path, char **argv, char **env)
         }
     }
 
+    /*
+     * exec starts a new user ABI context.  Keeping gp, ra, or saved
+     * registers from the old image is invalid and breaks position-independent
+     * glibc startup after an exec from BusyBox.
+     */
+    exec_reset_user_regs(p->trapframe);
     p->trapframe->a0 = ustack[0];
     p->trapframe->a1 = sp + sizeof(uint64);
     p->trapframe->a2 = sp + sizeof(uint64) * (ustack[0] + 2);
@@ -493,6 +590,8 @@ int exec(char *path, char **argv, char **env)
     p->trapframe->era = program_entry;
 #endif
     p->trapframe->sp = sp;
+    if (FINAL_DEV_DIAG && has_suffix(path, "rustup"))
+        debug_print_stack(new_pt, sp, ustack[0], estack[0], aux);
     if (!exec_trace_once && has_suffix(path, "abort01"))
     {
         exec_trace_once = 1;
@@ -530,9 +629,8 @@ int exec(char *path, char **argv, char **env)
     //< FUCK GLIBC!!!
 
 bad:
-    if (FINAL_DEV_DIAG)
-        printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
-               bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
+    printf("[diag][exec-bad] stage=%s path=%s original=%s argc=%d envc=%d sp=0x%lx oldsz=0x%lx\n",
+           bad_stage, path, original_path, (int)ustack[0], (int)estack[0], sp, oldsz);
     panic("exec error!\n");
     return -1;
 }
@@ -550,6 +648,34 @@ static void exec_single_thread(proc_t *p)
     }
     p->thread_num = 1;
     release(&p->lock);
+}
+
+static void exec_reset_user_regs(struct trapframe *trapframe)
+{
+#if defined RISCV
+    trapframe->ra = 0;
+    trapframe->sp = 0;
+    trapframe->gp = 0;
+    trapframe->tp = 0;
+    trapframe->t0 = trapframe->t1 = trapframe->t2 = 0;
+    trapframe->s0 = trapframe->s1 = 0;
+    trapframe->a0 = trapframe->a1 = trapframe->a2 = trapframe->a3 = 0;
+    trapframe->a4 = trapframe->a5 = trapframe->a6 = trapframe->a7 = 0;
+    trapframe->s2 = trapframe->s3 = trapframe->s4 = trapframe->s5 = 0;
+    trapframe->s6 = trapframe->s7 = trapframe->s8 = trapframe->s9 = 0;
+    trapframe->s10 = trapframe->s11 = 0;
+    trapframe->t3 = trapframe->t4 = trapframe->t5 = trapframe->t6 = 0;
+#else
+    trapframe->ra = trapframe->tp = trapframe->sp = 0;
+    trapframe->a0 = trapframe->a1 = trapframe->a2 = trapframe->a3 = 0;
+    trapframe->a4 = trapframe->a5 = trapframe->a6 = trapframe->a7 = 0;
+    trapframe->t0 = trapframe->t1 = trapframe->t2 = trapframe->t3 = 0;
+    trapframe->t4 = trapframe->t5 = trapframe->t6 = trapframe->t7 = 0;
+    trapframe->t8 = trapframe->r21 = trapframe->fp = 0;
+    trapframe->s0 = trapframe->s1 = trapframe->s2 = trapframe->s3 = 0;
+    trapframe->s4 = trapframe->s5 = trapframe->s6 = trapframe->s7 = 0;
+    trapframe->s8 = 0;
+#endif
 }
 
 static int has_suffix(const char *path, const char *suffix)
@@ -670,7 +796,7 @@ void alloc_aux(uint64 *aux, uint64 atid, uint64 value)
     aux[0]++;
 }
 
-int loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux)
+uint64 loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux)
 {
     int argc = aux[0];
     if (!argc)
@@ -887,8 +1013,7 @@ void debug_print_stack(pgtbl_t pagetable, uint64 sp, uint64 argc, uint64 envc, u
                         sp + i * sizeof(uint64), i);
         }
     }
-    sp += (envc) * sizeof(uint64);
-    sp += sp % 16;
+    sp += (envc + 1) * sizeof(uint64);
 
     // 4. 打印 auxv 数组
     int aux_index = 0;

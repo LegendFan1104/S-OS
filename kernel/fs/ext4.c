@@ -1630,7 +1630,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt) {
         goto Finish;
     }
 
-    if (unalg) {
+    if (unalg && size) {
         size_t len = size;
         if (size > (block_size - unalg))
             len = block_size - unalg;
@@ -1647,7 +1647,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt) {
                 goto Finish;
 
         } else {
-            /* Yes, we do. */
+            /* Sparse blocks read as zeroes. */
             memset(u8_buf, 0, len);
         }
 
@@ -1661,38 +1661,52 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt) {
         iblock_idx++;
     }
 
-    fblock_start = 0;
-    fblock_count = 0;
     while (size >= block_size) {
+        fblock_start = 0;
+        fblock_count = 0;
+
+        /* Collect one contiguous run, stopping before a hole or a gap. */
         while (iblock_idx < iblock_last) {
             r = ext4_fs_get_inode_dblk_idx(&ref, iblock_idx, &fblock, true);
             if (r != EOK)
                 goto Finish;
 
-            iblock_idx++;
+            if (fblock == 0)
+                break;
 
-            if (!fblock_start)
+            if (fblock_count == 0)
                 fblock_start = fblock;
 
             if ((fblock_start + fblock_count) != fblock)
                 break;
 
             fblock_count++;
+            iblock_idx++;
         }
 
-        r = ext4_blocks_get_direct(file->mp->fs.bdev, u8_buf, fblock_start, fblock_count);
-        if (r != EOK)
-            goto Finish;
+        if (fblock_count) {
+            r = ext4_blocks_get_direct(file->mp->fs.bdev, u8_buf, fblock_start, fblock_count);
+            if (r != EOK)
+                goto Finish;
 
-        size -= block_size * fblock_count;
-        u8_buf += block_size * fblock_count;
-        file->fpos += block_size * fblock_count;
+            size -= block_size * fblock_count;
+            u8_buf += block_size * fblock_count;
+            file->fpos += block_size * fblock_count;
 
-        if (rcnt)
-            *rcnt += block_size * fblock_count;
+            if (rcnt)
+                *rcnt += block_size * fblock_count;
+        } else {
+            /* A zero physical block denotes a sparse file hole. */
+            memset(u8_buf, 0, block_size);
+            size -= block_size;
+            u8_buf += block_size;
+            file->fpos += block_size;
+            iblock_idx++;
 
-        fblock_start = fblock;
-        fblock_count = 1;
+            if (rcnt)
+                *rcnt += block_size;
+        }
+
     }
 
     if (size) {
@@ -1701,10 +1715,14 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt) {
         if (r != EOK)
             goto Finish;
 
-        off = fblock * block_size;
-        r = ext4_block_readbytes(file->mp->fs.bdev, off, u8_buf, size);
-        if (r != EOK)
-            goto Finish;
+        if (fblock != 0) {
+            off = fblock * block_size;
+            r = ext4_block_readbytes(file->mp->fs.bdev, off, u8_buf, size);
+            if (r != EOK)
+                goto Finish;
+        } else {
+            memset(u8_buf, 0, size);
+        }
 
         file->fpos += size;
 

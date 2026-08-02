@@ -44,7 +44,8 @@ struct kstat {
   uint64 st_mtime_nsec;
   uint64 st_ctime_sec;
   uint64 st_ctime_nsec;
-  // unsigned __unused[2];
+  /* Linux riscv64 struct stat is 128 bytes; keep the ABI tail present. */
+  uint32 __reserved[2];
 };
 
 /**
