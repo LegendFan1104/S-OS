@@ -19,7 +19,9 @@ T2026104869910625
 
 ## 项目简介
 
-**S-OS (SuperOS)** 是一个宏内核操作系统，基于 xv6 源码和 oskernel2025 智核速启队编写，面向 RISC-V 64 和 LoongArch 64 两种体系结构，覆盖进程与线程管理、虚拟内存管理（Buddy + Slab + 页表 + VMA）、EXT4 文件系统（集成 lwext4）、VirtIO 块设备驱动（MMIO 与 PCI）以及 Linux 风格系统调用接口（进程、内存、文件、定时器、事件、socket 类别），可运行 basic、buxybox、libctest、libcbench、lua、部分ltp 等测试用例。
+**S-OS (SuperOS)** 是一个宏内核操作系统，基于 xv6 源码和 oskernel2025 智核速启队编写，面向 RISC-V 64 和 LoongArch 64 两种体系结构，覆盖进程与线程管理、虚拟内存管理（Buddy + Slab + 页表 + VMA）、EXT4 文件系统（集成 lwext4）、VirtIO 块设备驱动（MMIO 与 PCI）以及 Linux 风格系统调用接口（进程、内存、文件、定时器、事件、socket 类别）。
+初赛阶段可通过 basic、buxybox、libctest、libcbench、lua、部分ltp 等测试用例（primary分支）。
+决赛一阶段可通过 cagen 全部测试以及 buildstorm 环境检查与最小构建
 
 
 ## 文档
