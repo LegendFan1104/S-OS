@@ -473,7 +473,7 @@ void scheduler(void)
                 {
                     thread_t *candidate = list_entry(e, thread_t, elem);
                     if (candidate->state == t_RUNNABLE ||
-                        (candidate->state == t_TIMING && candidate->awakeTime < r_time() + (1LL << 35))) ///< 57min+time，防止awaketime < 0
+                        (candidate->state == t_TIMING && candidate->awakeTime <= r_time()))
                     {
                         t = candidate;
                         break;
@@ -705,7 +705,7 @@ static void copycontext_from_trapframe(context_t *t, struct trapframe *f)
     t->s6 = f->s6;
     t->s7 = f->s7;
     t->s8 = f->s8;
-    t->fp = f->tp; // loongarch uses tp as frame pointer
+    t->fp = f->fp;
 #endif
 }
 
@@ -717,6 +717,8 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
 
     acquire(&t->lock);
     t->p = p;
+    t->sig_set = p->main_thread->sig_set;
+    memset(&t->sig_pending, 0, sizeof(t->sig_pending));
     // /* 1. trapframe映射 */
     // DEBUG_LOG_LEVEL(LOG_DEBUG, "[map]thread trapframe: %p\n", p->kstack - PGSIZE * p->thread_num * 2);
     // if (mappages(kernel_pagetable, p->kstack - PGSIZE * p->thread_num * 2,
@@ -1337,6 +1339,9 @@ int tgkill(int tgid, int tid, int sig)
 {
     proc_t *p;
 
+    if (sig < 0 || sig > SIGRTMAX)
+        return -EINVAL;
+
     for (p = pool; p < &pool[NPROC]; p++)
     {
         acquire(&p->lock);
@@ -1348,14 +1353,21 @@ int tgkill(int tgid, int tid, int sig)
                 t = list_entry(e, thread_t, elem);
                 if (t->tid == tid)
                 {
-                    p->sig_pending.__val[0] |= (1UL << sig);
+                    if (sig != 0)
+                        t->sig_pending.__val[0] |= (1UL << (sig - 1));
                     if (signal_should_terminate(sig) &&
                         p->sigaction[sig].__sigaction_handler.sa_handler == NULL &&
                         (p->killed == 0 || p->killed > sig))
                     {
                         p->killed = sig;
                     }
-                    if (p->state == SLEEPING)
+                    if (sig != 0 &&
+                        (t->state == t_SLEEPING || t->state == t_TIMING))
+                    {
+                        futex_clear(t);
+                        t->state = t_RUNNABLE;
+                    }
+                    if (sig != 0 && p->state == SLEEPING)
                     {
                         p->state = RUNNABLE;
                     }
@@ -1366,7 +1378,7 @@ int tgkill(int tgid, int tid, int sig)
         }
         release(&p->lock);
     }
-    return -1;
+    return -ESRCH;
 }
 
 void copytrapframe(struct trapframe *f1, struct trapframe *f2)

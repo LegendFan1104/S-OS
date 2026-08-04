@@ -54,6 +54,8 @@ alloc_thread(void)
     t->awakeTime = 0;
     t->sz = 0;
     t->clear_child_tid = 0;
+    memset(&t->sig_set, 0, sizeof(t->sig_set));
+    memset(&t->sig_pending, 0, sizeof(t->sig_pending));
     release(&t->lock); ///< 释放线程锁
     return t;
 }

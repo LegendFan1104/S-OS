@@ -24,7 +24,7 @@
 
 void futex_wait(uint64 addr, thread_t* th, timespec_t* ts);
 int futex_wake(uint64 addr, int n);
-void futex_requeue(uint64 addr, int n, uint64 newAddr);
+int futex_requeue(uint64 addr, int wake_count, int requeue_count, uint64 newAddr);
 void futex_clear(thread_t* thread);
 void futex_init(void);
 #endif
