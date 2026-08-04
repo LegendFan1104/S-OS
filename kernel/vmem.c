@@ -31,6 +31,10 @@ void vmem_init()
     /*UART映射*/
     mappages(kernel_pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
+    /* QEMU virt Goldfish RTC 映射 */
+    mappages(kernel_pagetable, GOLDFISH_RTC, GOLDFISH_RTC, PGSIZE,
+             PTE_R | PTE_W);
+
     /*virtio映射*/
     mappages(kernel_pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 

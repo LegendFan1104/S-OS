@@ -3145,13 +3145,15 @@ void print_vma(struct vma *vma)
  */
 uint64 sys_mremap(unsigned long addr, unsigned long old_len, unsigned long new_len, unsigned long flags, unsigned long new_addr)
 {
+    proc_t *p = myproc();
 #if DEBUG
     LOG_LEVEL(LOG_INFO, "[sys_mremap]addr: %x, old_len: %x, new_len: %x, flags: %x, new_addr: %x\n", addr, old_len, new_len, flags, new_addr);
 #endif
     if (flags == MREMAP_MAYMOVE) //< 这里应该不会用到new_addr
     {
+        acquire(&p->vma_lock);
         /*先找到addr对应的vma*/
-        struct vma *vma_head = myproc()->vma;
+        struct vma *vma_head = p->vma;
         struct vma *vma = vma_head->next;
 
         while (vma != vma_head) //< 遍历p的vma链表，并查找
@@ -3177,10 +3179,11 @@ uint64 sys_mremap(unsigned long addr, unsigned long old_len, unsigned long new_l
         {
             if (new_len > old_len) //< 也就是new_len > vma->size，要从end开始扩充
             {
-                uvmalloc1(myproc()->pagetable, vma->end, addr + new_len, PTE_R); //< [todo]应该设置什么权限？
-                vma->size = new_len;
-                vma->end = vma->addr + new_len;
-                return addr; //< 返回分配的虚拟地址的起始
+            uvmalloc1(p->pagetable, vma->end, addr + new_len, PTE_R); //< [todo]应该设置什么权限？
+            vma->size = new_len;
+            vma->end = vma->addr + new_len;
+            release(&p->vma_lock);
+            return addr; //< 返回分配的虚拟地址的起始
             }
             else //< 需要收缩vma
             {
