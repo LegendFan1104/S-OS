@@ -132,6 +132,7 @@ void yield(void);
 uint64 fork(void);
 int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid);
 int wait(int pid, uint64 addr, int options);
+void thread_exit(int exit_state) __attribute__((noreturn));
 void exit(int exit_state);
 void proc_yield(void);
 void reg_info(void);

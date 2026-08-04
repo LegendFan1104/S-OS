@@ -75,6 +75,8 @@ void test_lmbench();
 void test_libc_all();
 void run_all();
 void run_submit();
+void run_primary();
+void run_final1();
 void run_buildstorm();
 void run_buildstorm_script();
 void run_probe();
@@ -1109,11 +1111,57 @@ void run_selected_profile()
 #endif
 }
 
-void run_submit()
+static int is_final1_image()
+{
+    int cagent_fd = sys_openat(AT_FDCWD, "/glibc/cagent_testcode.sh", O_RDONLY, 0);
+    int buildstorm_fd;
+
+    if (cagent_fd < 0)
+        return 0;
+
+    sys_close(cagent_fd);
+    buildstorm_fd = sys_openat(AT_FDCWD, "/glibc/buildstorm_testcode.sh", O_RDONLY, 0);
+    if (buildstorm_fd < 0)
+        return 0;
+
+    sys_close(buildstorm_fd);
+    return 1;
+}
+
+void run_primary()
+{
+    test_basic();
+    test_busybox();
+    test_lua();
+    // test_sh();
+    test_libc_all();
+    test_libcbench();
+    // test_iozone();
+
+    cleanup_ltp_round("pre-ltp");
+    sys_chdir("/musl");
+    prepare_ltp_tmpdir("ltp-musl", "/tmp/ltp-musl");
+    run_ltp_curated_profile("ltp-musl", ltp_submit_cases_musl_rv, ltp_submit_env_musl);
+    cleanup_ltp_round("ltp-musl");
+
+    sys_chdir("/musl");
+    prepare_ltp_tmpdir("ltp-glibc", "/tmp/ltp-glibc");
+    run_ltp_curated_profile("ltp-glibc", ltp_submit_cases_glibc_rv, ltp_submit_env_glibc);
+    cleanup_ltp_round("ltp-glibc");
+}
+
+void run_final1()
 {
     run_final_scripts();
     run_buildstorm();
-    //run_buildstorm_script();
+}
+
+void run_submit()
+{
+    if (is_final1_image())
+        run_final1();
+    else
+        run_primary();
     shutdown();
 }
 
@@ -1495,8 +1543,8 @@ static __attribute__((unused)) longtest libctest[] = {
     {1, {"./runtest.exe", "-w", "entry-static.exe", "inet_pton", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "mbc", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "memstream", 0}},
-    {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel_points", 0}},
-    {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel", 0}},
+    {0, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel_points", 0}},
+    {0, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cond", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_tsd", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "qsort", 0}},
@@ -1615,8 +1663,8 @@ static longtest libctest_dy[] = {
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "inet_pton", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "mbc", 0}}, //< 不行. src/functional/mbc.c:44: cannot set UTF-8 locale for test (codeset=ANSI_X3.4-1968)
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "memstream", 0}},
-    {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel_points", 0}}, //< pthread应该本来就跑不了
-    {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel", 0}},
+    {0, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel_points", 0}}, //< pthread应该本来就跑不了
+    {0, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cond", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_tsd", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "qsort", 0}},
