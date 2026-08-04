@@ -11,6 +11,7 @@
 #include "hsai_trap.h"
 #ifdef RISCV
 #include "riscv.h"
+#include "riscv_memlayout.h"
 #else
 #include "loongarch.h"
 #endif
@@ -72,13 +73,20 @@ static uint64
 read_rtc_seconds(void)
 {
 #ifdef RISCV
-    /*
-     * QEMU virt in the final environment exposes the timer via ACLINT/SBI,
-     * but does not guarantee a Goldfish RTC MMIO device at 0x101000.
-     * Touching that address faults before we can enter userspace, so for
-     * RISC-V we fall back to a fixed UTC boot timestamp instead.
-     */
-    return 1735689600ULL;
+    uint32 high0;
+    uint32 high1;
+    uint32 low;
+
+    /* Goldfish RTC exposes Unix time in nanoseconds as two 32-bit registers.
+     * Retry if the low word rolls over while the value is being read. */
+    do
+    {
+        high0 = *(volatile uint32 *)GOLDFISH_RTC_TIME_HIGH;
+        low = *(volatile uint32 *)GOLDFISH_RTC_TIME_LOW;
+        high1 = *(volatile uint32 *)GOLDFISH_RTC_TIME_HIGH;
+    } while (high0 != high1);
+
+    return ((((uint64)high0 << 32) | low) / 1000000000ULL);
 #else
     return LS7A_RTC_TIME_REG;
 #endif
@@ -92,7 +100,6 @@ sanitize_boot_time(uint64 rtc_sec)
     return rtc_sec;
 }
 
-#if !defined(RISCV)
 static uint64
 wait_rtc_second_change(uint64 prev, uint64 max_poll)
 {
@@ -104,7 +111,6 @@ wait_rtc_second_change(uint64 prev, uint64 max_poll)
     }
     return prev;
 }
-#endif
 
 static uint64
 sanitize_timer_freq(uint64 freq)
@@ -117,9 +123,6 @@ sanitize_timer_freq(uint64 freq)
 static uint64
 calibrate_timer_freq_from_rtc(void)
 {
-#ifdef RISCV
-    return DEFAULT_CLK_FREQ;
-#else
     uint64 sec0, sec1;
     uint64 t0, t1;
 
@@ -139,7 +142,6 @@ calibrate_timer_freq_from_rtc(void)
         return 0;
 
     return t1 - t0;
-#endif
 }
 
 uint64 boot_time = 0;

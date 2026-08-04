@@ -190,13 +190,6 @@ int pagefault_handler(uint64 addr)
     // 找到缺页对应的vma
     if (!flag)
     {
-#if defined RISCV
-        printf("[diag][pf-fail] pid=%d addr=%p epc=%p sz=%p vma=%p\n",
-               p->pid, addr, p->trapframe ? p->trapframe->epc : 0, p->sz, p->vma);
-#else
-        printf("[diag][pf-fail] pid=%d addr=%p era=%p sz=%p vma=%p\n",
-               p->pid, addr, p->trapframe ? p->trapframe->era : 0, p->sz, p->vma);
-#endif
         return -1;
     }
     // DEBUG_LOG_LEVEL(DEBUG, "pagefault addr:%p,p->sz:%p,alloc page num:%d\n", addr, p->sz, npages);
