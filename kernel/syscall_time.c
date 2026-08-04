@@ -81,7 +81,9 @@ int sleep(timespec_t *req, timespec_t *rem)
     acquire(&tickslock);
     while ((now_ns = r_time() * 1000000000ULL / CLK_FREQ) < deadline_ns)
     {
-        if (p->killed)
+        if (p->killed ||
+            (p->main_thread->sig_pending.__val[0] &
+             ~p->main_thread->sig_set.__val[0]))
         {
             release(&tickslock);
             if (rem)

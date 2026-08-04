@@ -35,7 +35,9 @@ void futex_wait(uint64 addr, thread_t *th, timespec_t *ts)
             /* 设置线程状态为睡眠或定时等待 */
             if (ts)
             {
-                th->awakeTime = ts->tv_sec * 1000000 + ts->tv_nsec / 1000;
+                uint64 timeout = ts->tv_sec * CLK_FREQ +
+                                 ts->tv_nsec * CLK_FREQ / 1000000000ULL;
+                th->awakeTime = r_time() + timeout;
                 th->state = t_TIMING;
             }
             else
@@ -81,14 +83,14 @@ void futex_wait(uint64 addr, thread_t *th, timespec_t *ts)
 int futex_wake(uint64 addr, int n)
 {
     int woken = 0;
-    for (int i = 0; i < FUTEX_COUNT && n > 0; i++)
+    for (int i = 0; i < FUTEX_COUNT && (n < 0 || woken < n); i++)
     {
         if (futex_queue[i].valid && futex_queue[i].addr == addr)
         {
             futex_queue[i].thread->state = t_RUNNABLE;
+            futex_queue[i].thread->p->state = RUNNABLE;
             DEBUG_LOG_LEVEL(LOG_DEBUG, "futex wake up addr %p, tid is %d\n", futex_queue[i].addr, futex_queue[i].thread->tid);
             futex_queue[i].valid = 0; ///< 清除futex等待
-            n--;
             woken++;
         }
     }
@@ -102,21 +104,34 @@ int futex_wake(uint64 addr, int n)
  * @param n 唤醒的数量
  * @param newAddr 新futex的地址
  */
-void futex_requeue(uint64 addr, int n, uint64 newAddr)
+int futex_requeue(uint64 addr, int wake_count, int requeue_count, uint64 newAddr)
 {
-    DEBUG_LOG_LEVEL(LOG_DEBUG, "futex_requeue: addr=%p, n=%d, newAddr=%p\n", addr, n, newAddr);
-    for (int i = 0; i < FUTEX_COUNT && n; i++)
+    int affected = 0;
+
+    DEBUG_LOG_LEVEL(LOG_DEBUG, "futex_requeue: addr=%p, wake=%d, requeue=%d, newAddr=%p\n",
+                    addr, wake_count, requeue_count, newAddr);
+    for (int i = 0; i < FUTEX_COUNT &&
+                    (wake_count < 0 || affected < wake_count); i++)
     {
         if (futex_queue[i].valid && futex_queue[i].addr == addr)
         {
             futex_queue[i].thread->state = t_RUNNABLE;
+            futex_queue[i].thread->p->state = RUNNABLE;
             futex_queue[i].valid = 0;
-            n--;
+            affected++;
         }
     }
-    for (int i = 0; i < FUTEX_COUNT; i++)
+
+    int moved = 0;
+    for (int i = 0; i < FUTEX_COUNT &&
+                    (requeue_count < 0 || moved < requeue_count); i++)
         if (futex_queue[i].valid && futex_queue[i].addr == addr)
+        {
             futex_queue[i].addr = newAddr;
+            moved++;
+        }
+
+    return affected + moved;
 }
 
 /**
