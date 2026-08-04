@@ -189,6 +189,7 @@ busybox_virtual_proc_self_maps(uint64 *len)
         busybox_virtual_append_map(maps, &pos, sizeof(maps), p->virt_addr,
                                    PGROUNDUP(p->sz), PTE_R | PTE_X,
                                    p->exe_path[0] ? p->exe_path : "/busybox");
+    acquire(&p->vma_lock);
     if (p->vma)
     {
         struct vma *vma;
@@ -205,6 +206,7 @@ busybox_virtual_proc_self_maps(uint64 *len)
                                        vma->end, vma->perm, path);
         }
     }
+    release(&p->vma_lock);
     maps[pos] = '\0';
     *len = pos;
     return maps;
