@@ -1215,6 +1215,8 @@ int sys_wait(int pid, uint64 va, int option)
 
 uint64 sys_exit(int n)
 {
+    if (myproc()->thread_num > 1)
+        thread_exit(n);
     exit(n);
     return 0;
 }
@@ -3662,18 +3664,13 @@ uint64 sys_shmctl(uint64 shmid, uint64 cmd, uint64 buf)
 
 void syscall(struct trapframe *trapframe)
 {
+#if STACK_COPYOUT_DIAG && defined(RISCV)
     proc_t *p = myproc();
-    static int diag_init_syscall_count = 0;
-    static int diag_error_syscall_count = 0;
+#endif
     uint64 a[8];
 
     for (int i = 0; i < 8; i++)
         a[i] = hsai_get_arg(trapframe, i);
-#if !defined RISCV
-    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000)
-        printf("[diag][syscall] pid=%d nr=%lld a0=%p a1=%p a2=%p\n",
-               p->pid, (long long)a[7], a[0], a[1], a[2]);
-#endif
     long long ret = -1;
     switch (a[7])
     {
@@ -4048,58 +4045,6 @@ void syscall(struct trapframe *trapframe)
     {
         ret = -ENOSYS;
     }
-    }
-#if !defined RISCV
-    if (FINAL_DEV_DIAG && p && p->pid >= 8 && diag_error_syscall_count < 30000 &&
-        (a[7] == SYS_mmap || a[7] == SYS_brk || a[7] == SYS_clone ||
-         a[7] == SYS_mprotect || a[7] == SYS_munmap))
-        printf("[diag][sysret] pid=%d nr=%lld ret=%p a0=%p a1=%p\n",
-               p->pid, (long long)a[7], ret, a[0], a[1]);
-#endif
-    if (FINAL_DEV_DIAG && p && p->pid == 1 && diag_init_syscall_count < 32)
-    {
-        printf("[diag][syscall] pid=%d nr=%d name=%s ret=%lld\n",
-               p->pid,
-               (int)a[7],
-               get_syscall_name((int)a[7]),
-               ret);
-        diag_init_syscall_count++;
-    }
-    if (FINAL_DEV_DIAG && p && p->pid != 1 && ret < 0 &&
-        diag_error_syscall_count < 96)
-    {
-        printf("[diag][syscall-error] pid=%d nr=%d name=%s ret=%lld a0=%p a1=%p a2=%p a3=%p\n",
-               p->pid, (int)a[7], get_syscall_name((int)a[7]), ret,
-               a[0], a[1], a[2], a[3]);
-        diag_error_syscall_count++;
-    }
-    if (FINAL_DEV_DIAG && p && p->pid != 1)
-    {
-        int nr = (int)a[7];
-        if (nr == SYS_clone || nr == SYS_execve || nr == SYS_futex ||
-            nr == SYS_write || nr == SYS_writev ||
-            nr == SYS_mmap || nr == SYS_munmap || nr == SYS_mprotect ||
-            nr == SYS_brk || nr == SYS_set_tid_address ||
-            nr == SYS_set_robust_list || nr == SYS_exit ||
-            nr == SYS_exit_group || nr == SYS_rt_sigaction ||
-            nr == SYS_sigaltstack ||
-            nr == SYS_rt_sigprocmask || nr == SYS_getrandom ||
-            nr == SYS_gettid || nr == SYS_socket ||
-            nr == SYS_bind || nr == SYS_listen ||
-            nr == SYS_accept || nr == SYS_connect ||
-            nr == SYS_faccessat || nr == SYS_statx || nr == SYS_fstatat ||
-            nr == SYS_readlinkat)
-        {
-            printf("[diag][syscall-hot] pid=%d tid=%d nr=%d name=%s ret=%lld ra=%p tp=%p a0=%p a1=%p a2=%p a3=%p\n",
-                   p->pid,
-                   p->main_thread ? p->main_thread->tid : -1,
-                   nr,
-                   get_syscall_name(nr),
-                   ret,
-                   trapframe->ra,
-                   trapframe->tp,
-                   a[0], a[1], a[2], a[3]);
-        }
     }
 #if STACK_COPYOUT_DIAG && defined(RISCV)
     stack_diag_record(p, (int)a[7], trapframe->epc, a[0], a[1], a[2], ret);
