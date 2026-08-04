@@ -97,6 +97,33 @@ static char *busybox_cmd[];
 char *question_name[] = {};
 static longtest libctest[];
 static longtest libctest_dy[];
+// static longtest libcbench[] = {
+//     /* Set valid to 0 to exclude a case from the current run. */
+//     //已经排查发现，镜像内可执行文件不接受参数，无法筛选只能全量
+//     {1, {"./libc-bench", "b_malloc_big1", 0}},
+//     {1, {"./libc-bench", "b_malloc_big2", 0}},
+//     {1, {"./libc-bench", "b_malloc_bubble", 0}},
+//     {1, {"./libc-bench", "b_malloc_sparse", 0}},
+//     {1, {"./libc-bench", "b_malloc_thread_stress", 0}},
+//     {1, {"./libc-bench", "b_malloc_thread_local", 0}},
+//     {1, {"./libc-bench", "b_malloc_tiny1", 0}},
+//     {1, {"./libc-bench", "b_malloc_tiny2", 0}},
+//     // {1, {"./libc-bench", "b_pthread_create_serial1", 0}},
+//     {1, {"./libc-bench", "b_pthread_createjoin_serial1", 0}},
+//     // {1, {"./libc-bench", "b_pthread_createjoin_serial2", 0}},
+//     {1, {"./libc-bench", "b_pthread_uselesslock", 0}},
+//     {1, {"./libc-bench", "b_regex_compile", 0}},
+//     {1, {"./libc-bench", "b_regex_search", 0}},
+//     {1, {"./libc-bench", "b_stdio_putcgetc", 0}},
+//     {1, {"./libc-bench", "b_stdio_putcgetc_unlocked", 0}},
+//     {1, {"./libc-bench", "b_string_memset", 0}},
+//     {1, {"./libc-bench", "b_string_strchr", 0}},
+//     {1, {"./libc-bench", "b_string_strlen", 0}},
+//     {1, {"./libc-bench", "b_string_strstr", 0}},
+//     {1, {"./libc-bench", "b_utf8_bigbuf", 0}},
+//     {1, {"./libc-bench", "b_utf8_onebyone", 0}},
+//     {0, {0}},
+// };
 char *basic_name[] = {
     "brk",
     "chdir",

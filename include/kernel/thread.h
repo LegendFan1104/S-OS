@@ -15,7 +15,7 @@
 #include "loongarch.h"
 #endif
 
-#define THREAD_NUM 2048
+#define THREAD_NUM 4096
 
 enum thread_state 
 {
