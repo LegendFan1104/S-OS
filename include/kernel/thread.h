@@ -49,8 +49,8 @@ typedef struct thread
     struct list_elem elem;      //< 用于进程的线程链表
     
     uint64 clear_child_tid;     //< 子线程ID清除标志
-
-    // TODO: signal
+    __sigset_t sig_set;         //< 线程信号屏蔽字
+    __sigset_t sig_pending;     //< 线程待处理信号
 } thread_t;
 
 extern thread_t thread_pools[THREAD_NUM];

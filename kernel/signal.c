@@ -29,12 +29,14 @@ int set_sigaction(int signum, sigaction const *act, sigaction *oldact)
 int sigprocmask(int how, __sigset_t *set, __sigset_t *oldset)
 {
     proc_t *p = myproc();
+    thread_t *t = p->main_thread;
+    __sigset_t *current = t ? &t->sig_set : &p->sig_set;
     for (int i = 0; i < SIGSET_LEN; i++)  ///< 遍历信号集的每个元素（通常是64位数组）
     {
          // 如果需要返回旧信号集，先保存当前值
         if (oldset)
         {
-            oldset->__val[i] = p->sig_set.__val[i];
+            oldset->__val[i] = current->__val[i];
         }
         // 如果set为NULL，跳过修改操作
         if (set == NULL)
@@ -43,13 +45,13 @@ int sigprocmask(int how, __sigset_t *set, __sigset_t *oldset)
         switch (how)
         {
         case SIG_BLOCK:     ///<  阻塞指定信号（或操作）
-            p->sig_set.__val[i] |= set->__val[i];
+            current->__val[i] |= set->__val[i];
             break;
         case SIG_UNBLOCK:   ///<  解除阻塞指定信号（与非操作）
-            p->sig_set.__val[i] &= ~set->__val[i];
+            current->__val[i] &= ~set->__val[i];
             break;
         case SIG_SETMASK:   ///<  直接设置新信号掩码
-            p->sig_set.__val[i] = set->__val[i];
+            current->__val[i] = set->__val[i];
             break;
         default:
             break;
@@ -59,6 +61,8 @@ int sigprocmask(int how, __sigset_t *set, __sigset_t *oldset)
     特殊处理：确保SIGTERM、SIGKILL和SIGSTOP信号始终不被阻塞
     通过位操作保留这三个信号的屏蔽位，其他位清零
     */
-    p->sig_set.__val[0] &= ~((1ul << SIGTERM) | (1ul << SIGKILL) | (1ul << SIGSTOP));
+    current->__val[0] &= ~((1ul << (SIGTERM - 1)) |
+                            (1ul << (SIGKILL - 1)) |
+                            (1ul << (SIGSTOP - 1)));
     return 0;
 }

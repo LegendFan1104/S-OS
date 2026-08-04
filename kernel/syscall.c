@@ -1196,9 +1196,23 @@ int sys_clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     {
         return fork();
     }
+
+    /*
+     * musl's clone wrapper follows the native syscall ABI.  RISC-V passes
+     * (flags, stack, ptid, tls, ctid), while LoongArch passes
+     * (flags, stack, ptid, ctid, tls).  Keep the internal clone helpers
+     * architecture independent by normalizing both forms here.
+     */
+#ifdef RISCV
+    uint64 clone_tls = tls;
+    uint64 clone_ctid = ctid;
+#else
+    uint64 clone_tls = ctid;
+    uint64 clone_ctid = tls;
+#endif
     if (flags & CLONE_VM)
-        return clone_thread(stack, ptid, tls, ctid, flags);
-    return clone(flags, stack, ptid, tls, ctid);
+        return clone_thread(stack, ptid, clone_tls, clone_ctid, flags);
+    return clone(flags, stack, ptid, clone_tls, clone_ctid);
 }
 
 int sys_clone3()
@@ -3230,7 +3244,9 @@ uint64 sys_ppoll(uint64 pollfd, int nfds, uint64 tsaddr, uint64 sigmaskaddr)
             uint64 now_us = now.sec * 1000000ULL + now.usec;
             if (now_us - start_us >= wait_us)
                 break;
-            if (myproc()->killed)
+            if (myproc()->killed ||
+                (p->main_thread->sig_pending.__val[0] &
+                 ~p->main_thread->sig_set.__val[0]))
             {
                 release(&tickslock);
                 return -EINTR;
@@ -3304,9 +3320,12 @@ uint64 sys_clock_nanosleep(int which_clock,
         unsigned long pending;
 
         pending = p->sig_pending.__val[0] & ~p->sig_set.__val[0];
+        pending |= p->main_thread->sig_pending.__val[0] &
+                   ~p->main_thread->sig_set.__val[0];
         if (p->killed || pending)
         {
             p->sig_pending.__val[0] &= ~pending;
+            p->main_thread->sig_pending.__val[0] &= ~pending;
             now = r_time();
             if (deadline > now)
             {
@@ -3354,33 +3373,35 @@ sys_futex(uint64 uaddr, int op, uint32 val, uint64 utime, uint64 uaddr2, uint32 
     switch (op)
     {
     case FUTEX_WAIT:
-        copyin(p->pagetable, (char *)&userVal, uaddr, sizeof(int));
+        if (copyin(p->pagetable, (char *)&userVal, uaddr, sizeof(int)) < 0)
+            return -EFAULT;
         if (utime)
         {
             if (copyin(p->pagetable, (char *)&t, utime, sizeof(timespec_t)) < 0)
-                panic("copy time error!\n");
+                return -EFAULT;
+            if (t.tv_nsec >= 1000000000ULL)
+                return -EINVAL;
         }
         if (userVal != val)
-            return -1;
-        /* 单线程进程无超时等待：没有其他线程会futex_wake，直接修改futex word让调用者退出循环 */
-        if (p->thread_num <= 1 && utime == 0)
-        {
-            userVal = 0;
-            copyout(p->pagetable, uaddr, (char *)&userVal, sizeof(int));
-            return 0;
-        }
+            return -EAGAIN;
         /* 使用当前运行的线程而不是主线程 */
         futex_wait(uaddr, p->main_thread, utime ? &t : 0);
+        if (p->main_thread->sig_pending.__val[0] &
+            ~p->main_thread->sig_set.__val[0])
+        {
+            p->main_thread->sig_pending.__val[0] &=
+                p->main_thread->sig_set.__val[0];
+            return -EINTR;
+        }
         break;
     case FUTEX_WAKE:
         return futex_wake(uaddr, val);
         break;
     case FUTEX_REQUEUE:
-        futex_requeue(uaddr, val, uaddr2);
-        break;
+        return futex_requeue(uaddr, (int)val, (int)utime, uaddr2);
     default:
         DEBUG_LOG_LEVEL(LOG_WARNING, "Futex type not support!\n");
-        exit(0);
+        return -ENOSYS;
     }
     return 0;
 }
@@ -3543,7 +3564,7 @@ sys_tkill(int tid, int sig)
     {
         p = &pool[i];
         /* 遍历p的thread_queue，找到为止tid==tid*/
-        if (p->state == RUNNABLE || p->state == RUNNING)
+        if (p->state != UNUSED && p->state != ZOMBIE)
         {
             struct list_elem *e = list_begin(&p->thread_queue);
             while (e != list_end(&p->thread_queue))
@@ -3551,13 +3572,13 @@ sys_tkill(int tid, int sig)
                 thread_t *t = list_entry(e, thread_t, elem);
                 if (t->tid == tid)
                 {
-                    tgkill(p->pid, tid, sig);
+                    return tgkill(p->pid, tid, sig);
                 }
                 e = list_next(e);
             }
         }
     }
-    return -1;
+    return -ESRCH;
 }
 
 /* @todo */
