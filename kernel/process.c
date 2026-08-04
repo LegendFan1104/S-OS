@@ -295,8 +295,8 @@ static void freeproc(proc_t *p)
     p->pgid = 0;
     p->sid = 0;
     p->state = UNUSED;
-    p->main_thread->state = t_UNUSED;
     p->main_thread = NULL;
+    p->thread_num = 0;
     p->ktime = 0;
     p->utime = 0;
     p->parent = NULL;
@@ -431,6 +431,28 @@ pgtbl_t proc_pagetable(struct proc *p)
     return pagetable;
 }
 
+/* Reclaim a thread only after the scheduler has left its kernel stack. */
+static void reap_thread(proc_t *p, thread_t *t)
+{
+    futex_clear(t);
+    if (t->trapframe)
+    {
+        kfree((void *)t->trapframe);
+        t->trapframe = NULL;
+    }
+    if (t->kstack != p->kstack)
+        pmem_free_pages((void *)t->kstack_pa, KSTACKSIZE / PGSIZE);
+
+    list_remove(&t->elem);
+    t->state = t_UNUSED;
+    t->p = NULL;
+    t->chan = NULL;
+    t->awakeTime = 0;
+    t->kstack = 0;
+    t->kstack_pa = 0;
+    list_push_front(&free_thread, &t->elem);
+}
+
 void scheduler(void)
 {
     struct proc *p;
@@ -510,6 +532,12 @@ void scheduler(void)
                 {
                     list_remove(&t->elem);
                     list_push_back(&p->thread_queue, &t->elem);
+                }
+                else if (p->state != ZOMBIE && t->state == t_ZOMBIE)
+                {
+                    if (p->main_thread == t)
+                        p->main_thread = NULL;
+                    reap_thread(p, t);
                 }
 
                 /* 返回这里时没有用户进程在CPU上执行 */
@@ -1002,10 +1030,6 @@ void exit(int exit_state)
     /* 禁止init进程退出 */
     if (p == initproc)
         panic("init exiting");
-    if (p->term_signal)
-        printf("[diag][exit-signal] pid=%d tid=%d sig=%d state=%d\n",
-               p->pid, p->main_thread ? p->main_thread->tid : -1,
-               p->term_signal, exit_state);
 
     /* 关掉所有打开的文件 */
     for (int fd = 0; fd < NOFILE; fd++)
@@ -1039,6 +1063,35 @@ void exit(int exit_state)
 
     release(&parent_lock);
     sched();
+}
+
+/* Exit one thread while keeping the rest of the thread group alive. */
+void thread_exit(int exit_state)
+{
+    proc_t *p = myproc();
+    thread_t *t = p->main_thread;
+    int zero = 0;
+
+    if (t == NULL || p->thread_num <= 1)
+        exit(exit_state);
+
+    if (t->clear_child_tid)
+    {
+        copyout(p->pagetable, t->clear_child_tid, (char *)&zero, sizeof(zero));
+        futex_wake(t->clear_child_tid, 1);
+        t->clear_child_tid = 0;
+    }
+    futex_clear(t);
+
+    acquire(&p->lock);
+    t->state = t_ZOMBIE;
+    p->thread_num--;
+    p->state = RUNNABLE;
+    sched();
+
+    panic("thread_exit returned");
+    for (;;)
+        ;
 }
 /**
  * @brief  调整进程的内存大小
