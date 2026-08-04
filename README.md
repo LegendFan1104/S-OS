@@ -19,18 +19,18 @@ T2026104869910625
 
 ## 项目简介
 
-**S-OS (SuperOS)** 是一个宏内核操作系统，基于 xv6 源码和 oskernel2025 智核速启队编写，面向 RISC-V 64 和 LoongArch 64 两种体系结构，覆盖进程与线程管理、虚拟内存管理（Buddy + Slab + 页表 + VMA）、EXT4 文件系统（集成 lwext4）、VirtIO 块设备驱动（MMIO 与 PCI）以及 Linux 风格系统调用接口（进程、内存、文件、定时器、事件、socket 类别）。
+**S-OS (SuperOS)** 是一个由 c 语言编写的宏内核操作系统，基于 xv6 源码和 oskernel2025 智核速启队编写，面向 RISC-V 64 和 LoongArch 64 两种体系结构，覆盖进程与线程管理、虚拟内存管理（Buddy + Slab + 页表 + VMA）、EXT4 文件系统（集成 lwext4）、VirtIO 块设备驱动（MMIO 与 PCI）以及 Linux 风格系统调用接口（进程、内存、文件、定时器、事件、socket 类别）。
 
-初赛阶段可通过 basic、buxybox、libctest、libcbench、lua、部分ltp 等测试用例（primary分支）。
+初赛阶段可通过 basic、busybox、libctest、libcbench、lua、部分ltp 等测试用例（详见primary分支）。
 
-决赛一阶段可通过 cagen 全部测试以及 buildstorm 环境检查与最小构建
+决赛一阶段可通过 cagent 全部测试以及 buildstorm 环境检查与最小构建。
 
 
 ## 文档
 
-初赛文档、ppt见 **[初赛提交/](初赛提交/)**
+初赛文档、ppt见 **[初赛提交/](初赛提交/)。**
 
-受限于仓库大小，初赛答辩视频、PPT 见[这里](https://pan.baidu.com/s/10Kx1rCboyJ2VnzkF5Iv7Kg?pwd=sos3)。
+受限于仓库大小，初赛答辩视频、PPT 见 **[这里](https://pan.baidu.com/s/10Kx1rCboyJ2VnzkF5Iv7Kg?pwd=sos3)。**
 
 开发过程中的详细设计文档、架构说明、开发进展、测试体系等见 **[docx/](docx/)** 目录。
 
