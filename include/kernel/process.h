@@ -60,6 +60,7 @@ typedef struct thread thread_t;
 typedef struct proc
 {
     spinlock_t lock;
+    spinlock_t vma_lock;
     void *chan;
     struct proc *parent;
 

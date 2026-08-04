@@ -21,6 +21,11 @@
 #define UART0 0x10000000L
 #define UART0_IRQ 10
 
+// QEMU virt's Goldfish RTC, time value in nanoseconds since the Unix epoch.
+#define GOLDFISH_RTC 0x101000L
+#define GOLDFISH_RTC_TIME_LOW (GOLDFISH_RTC + 0x00)
+#define GOLDFISH_RTC_TIME_HIGH (GOLDFISH_RTC + 0x04)
+
 // virtio mmio interface
 //#define VIRTIO0 0x10001000UL
 #define VIRTIO0_IRQ 1

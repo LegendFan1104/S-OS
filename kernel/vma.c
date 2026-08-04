@@ -13,6 +13,18 @@
 #include "loongarch.h"
 #endif
 
+#define VMA_LOADING 0x80000000
+
+static struct vma *alloc_vma_locked(struct proc *p, enum segtype type,
+                                    uint64 addr, int64 sz, int perm,
+                                    int alloc, uint64 pa);
+static struct vma *alloc_mmap_vma_locked(struct proc *p, int flags,
+                                         uint64 start, int64 len, int perm,
+                                         int fd, int offset);
+static int vma_is_linked_locked(proc_t *p, struct vma *target);
+static int free_vma_locked(struct proc *p, uint64 start, uint64 end);
+static int free_vma_list_locked(struct proc *p);
+
 static uint64
 mmap_lower_bound(proc_t *p)
 {
@@ -131,6 +143,9 @@ vma_remove_range(proc_t *p, uint64 start, uint64 end, int unmap_pages)
             continue;
         }
 
+        if (vma->flags & VMA_LOADING)
+            return -1;
+
         cut_start = vma->addr > start ? vma->addr : start;
         cut_end = vma->end < end ? vma->end : end;
         if (cut_start >= cut_end)
@@ -189,21 +204,25 @@ vma_remove_range(proc_t *p, uint64 start, uint64 end, int unmap_pages)
 
 struct vma *vma_init(struct proc *p)
 {
+    acquire(&p->vma_lock);
     struct vma *vma = (struct vma *)pmem_alloc_pages(1);
     if (vma == NULL)
     {
         panic("vma_init: pmem_alloc_pages failed\n");
+        release(&p->vma_lock);
         return NULL;
     }
     memset(vma, 0, PGSIZE);
     vma->type = NONE;
     vma->prev = vma->next = vma;
     p->vma = vma;
-    if (alloc_mmap_vma(p, 0, USER_MMAP_START, 0, 0, 0, 0) == NULL)
+    if (alloc_mmap_vma_locked(p, 0, USER_MMAP_START, 0, 0, 0, 0) == NULL)
     {
         panic("init vma error!");
+        release(&p->vma_lock);
         return NULL;
     }
+    release(&p->vma_lock);
     return vma;
 };
 
@@ -340,11 +359,13 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
                p->pid, len, fd, prot, flags);
         return -1;
     }
-    struct vma *vma = alloc_mmap_vma(p, flags, start, len, perm, fd, offset);
+    acquire(&p->vma_lock);
+    struct vma *vma = alloc_mmap_vma_locked(p, flags, start, len, perm, fd, offset);
     if (vma == NULL)
     {
         printf("mmap ALLOCVMA FAILED pid=%d len=%ld free=%lu\n",
                p->pid, len, pmem_free_pages_count());
+        release(&p->vma_lock);
         return -1;
     }
     if (!(flags & MAP_FIXED))
@@ -355,34 +376,42 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
     {
         for (uint64 i = 0; i < mapped_len; i += PGSIZE)
             if (mmap_prepare_page(p, start + i, perm) < 0)
+            {
+                release(&p->vma_lock);
                 return -1;
+            }
+        release(&p->vma_lock);
         return start;
     }
 
     uint64 i;
     uint64 file_size = 0;
+    char *file_page = (char *)pmem_alloc_pages(1);
+
+    if (file_page == NULL)
+    {
+        vma->flags &= ~VMA_LOADING;
+        release(&p->vma_lock);
+        return -1;
+    }
 
     if (f->f_type == FD_REG && f->f_data.f_vnode.data != NULL)
     {
         struct ext4_file *efile = (struct ext4_file *)f->f_data.f_vnode.data;
         file_size = efile->fsize;
     }
+    release(&p->vma_lock);
 
     for (i = 0; i < mapped_len; i += PGSIZE)
     {
-        pte_t *pte;
-        uint64 pa;
         int remaining;
         int to_read;
         int bytes_read = 0;
 
-        if (mmap_prepare_page(p, start + i, perm) < 0)
-            return -1;
-        pte = walk(p->pagetable, start + i, 0);
-        pa = PTE2PA(*pte);
-
         remaining = (int)((uint64)len - i);
         to_read = (remaining > (int)PGSIZE) ? PGSIZE : remaining;
+
+        memset((void *)((uint64)file_page | dmwin_win0), 0, PGSIZE);
 
         if (to_read > 0)
         {
@@ -396,31 +425,68 @@ uint64 mmap(uint64 start, int64 len, int prot, int flags, int fd, int offset)
 
             if (available > 0)
             {
-            bytes_read = get_file_ops()->readat(
-                f,
-                (pa | dmwin_win0),
-                available,
-                offset + i);
+                bytes_read = get_file_ops()->readat(
+                    f,
+                    ((uint64)file_page | dmwin_win0),
+                    available,
+                    offset + i);
                 if (bytes_read < 0)
                 {
+                    acquire(&p->vma_lock);
+                    if (vma_is_linked_locked(p, vma))
+                        vma->flags &= ~VMA_LOADING;
+                    release(&p->vma_lock);
+                    pmem_free_pages(file_page, 1);
                     return bytes_read;
                 }
             }
         }
 
-        // 文件内容不足时，填充零
         if (bytes_read < to_read)
+            memset((char *)((uint64)file_page | dmwin_win0) + bytes_read,
+                   0, to_read - bytes_read);
+
+        acquire(&p->vma_lock);
+        if (!vma_is_linked_locked(p, vma))
         {
-            memset((void *)((pa + bytes_read) | dmwin_win0), 0, to_read - bytes_read);
+            release(&p->vma_lock);
+            pmem_free_pages(file_page, 1);
+            return -1;
+        }
+        if (mmap_prepare_page(p, start + i, perm) < 0)
+        {
+            vma->flags &= ~VMA_LOADING;
+            release(&p->vma_lock);
+            pmem_free_pages(file_page, 1);
+            return -1;
         }
 
-        // 页面剩余部分清零
-        if (to_read < PGSIZE)
-        {
-            memset((void *)((pa + to_read) | dmwin_win0), 0, PGSIZE - to_read);
-        }
+        pte_t *pte = walk(p->pagetable, start + i, 0);
+        uint64 pa = PTE2PA(*pte);
+        memmove((void *)(pa | dmwin_win0),
+                (void *)((uint64)file_page | dmwin_win0), PGSIZE);
+        release(&p->vma_lock);
     }
+
+    acquire(&p->vma_lock);
+    if (vma_is_linked_locked(p, vma))
+        vma->flags &= ~VMA_LOADING;
+    release(&p->vma_lock);
+    pmem_free_pages(file_page, 1);
     return start;
+}
+
+static int
+vma_is_linked_locked(proc_t *p, struct vma *target)
+{
+    struct vma *vma;
+
+    for (vma = p->vma->next; vma != p->vma; vma = vma->next)
+    {
+        if (vma == target)
+            return 1;
+    }
+    return 0;
 }
 
 int munmap(uint64 start, int len)
@@ -434,13 +500,15 @@ int munmap(uint64 start, int len)
     if (end <= start)
         return -1;
 
+    acquire(&p->vma_lock);
     if (vma_remove_range(p, start, end, 1) > 0)
         sfence_vma();
+    release(&p->vma_lock);
     /* Linux treats unmapped holes in an otherwise valid munmap request as no-op. */
     return 0;
 }
 
-struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, int perm, int fd, int offset)
+static struct vma *alloc_mmap_vma_locked(struct proc *p, int flags, uint64 start, int64 len, int perm, int fd, int offset)
 {
     struct vma *vma = NULL;
     uint64 mapped_len = 0;
@@ -491,7 +559,7 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
     }
 
     /* mmap() below owns page population for both anonymous and file mappings. */
-    vma = alloc_vma(p, MMAP, start, mapped_len, perm, 0, 0);
+    vma = alloc_vma_locked(p, MMAP, start, mapped_len, perm, 0, 0);
     if (vma == NULL)
     {
         if (FINAL_DEV_DIAG)
@@ -500,12 +568,24 @@ struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, i
         return NULL;
     }
     vma->flags = flags;
+    if (len > 0 && fd != -1)
+        vma->flags |= VMA_LOADING;
     vma->fd = fd;
     vma->f_off = offset;
     return vma;
 }
 
-struct vma *alloc_vma(struct proc *p, enum segtype type, uint64 addr, int64 sz, int perm, int alloc, uint64 pa)
+struct vma *alloc_mmap_vma(struct proc *p, int flags, uint64 start, int64 len, int perm, int fd, int offset)
+{
+    struct vma *vma;
+
+    acquire(&p->vma_lock);
+    vma = alloc_mmap_vma_locked(p, flags, start, len, perm, fd, offset);
+    release(&p->vma_lock);
+    return vma;
+}
+
+static struct vma *alloc_vma_locked(struct proc *p, enum segtype type, uint64 addr, int64 sz, int perm, int alloc, uint64 pa)
 {
     // 添加空指针检查
     if (p == NULL || p->vma == NULL) {
@@ -581,6 +661,16 @@ struct vma *alloc_vma(struct proc *p, enum segtype type, uint64 addr, int64 sz, 
     return vma;
 }
 
+struct vma *alloc_vma(struct proc *p, enum segtype type, uint64 addr, int64 sz, int perm, int alloc, uint64 pa)
+{
+    struct vma *vma;
+
+    acquire(&p->vma_lock);
+    vma = alloc_vma_locked(p, type, addr, sz, perm, alloc, pa);
+    release(&p->vma_lock);
+    return vma;
+}
+
 struct vma *find_mmap_vma(struct vma *head)
 {
     struct vma *vma = head->next;
@@ -599,6 +689,7 @@ uint64 alloc_vma_stack(struct proc *p)
     // assert(len == PGSIZE, "user stack size must be PGSIZE");
     uint64 end = USER_STACK_TOP;
     uint64 start = end - USER_STACK_SIZE;
+    acquire(&p->vma_lock);
     struct vma *find_vma = p->vma->next;
     // stack 放到链表的最后端
     while (find_vma != p->vma && find_vma->next != p->vma)
@@ -609,11 +700,13 @@ uint64 alloc_vma_stack(struct proc *p)
     if (NULL == vma)
     {
         panic("vma kalloc failed\n");
+        release(&p->vma_lock);
         return -1;
     }
     if (uvmalloc1(p->pagetable, start, end, PTE_STACK) != 1)
     {
         panic("user stack vma alloc failed\n");
+        release(&p->vma_lock);
         return -1;
     }
     vma->type = STACK;
@@ -628,6 +721,7 @@ uint64 alloc_vma_stack(struct proc *p)
     vma->next = find_vma->next;
     find_vma->next->prev = vma;
     find_vma->next = vma;
+    release(&p->vma_lock);
     return 0;
 }
 
@@ -648,6 +742,7 @@ uint64 get_proc_sp(struct proc *p)
 
 struct vma *vma_copy(struct proc *np, struct vma *head)
 {
+    acquire(&np->vma_lock);
     struct vma *new_vma = (struct vma *)pmem_alloc_pages(1);
     if (new_vma == NULL)
     {
@@ -677,10 +772,12 @@ struct vma *vma_copy(struct proc *np, struct vma *head)
         new_vma->prev = nvma;
         pre = pre->next;
     }
+    release(&np->vma_lock);
     return new_vma;
 bad:
     np->vma = NULL;
     pmem_free_pages(new_vma, 1);
+    release(&np->vma_lock);
     panic("vma alloc failed");
     return NULL;
 }
@@ -767,7 +864,7 @@ bad:
     return -1;
 }
 
-int free_vma_list(struct proc *p)
+static int free_vma_list_locked(struct proc *p)
 {
     struct vma *vma_head = p->vma;
     if (vma_head == NULL)
@@ -805,7 +902,17 @@ int free_vma_list(struct proc *p)
     return 1;
 }
 
-int free_vma(struct proc *p, uint64 start, uint64 end)
+int free_vma_list(struct proc *p)
+{
+    int ret;
+
+    acquire(&p->vma_lock);
+    ret = free_vma_list_locked(p);
+    release(&p->vma_lock);
+    return ret;
+}
+
+static int free_vma_locked(struct proc *p, uint64 start, uint64 end)
 {
     struct vma *vma_head = p->vma;
     if (!vma_head || !vma_head->next)
@@ -878,4 +985,14 @@ int free_vma(struct proc *p, uint64 start, uint64 end)
         vma = next_vma;
     }
     return 1;
+}
+
+int free_vma(struct proc *p, uint64 start, uint64 end)
+{
+    int ret;
+
+    acquire(&p->vma_lock);
+    ret = free_vma_locked(p, start, end);
+    release(&p->vma_lock);
+    return ret;
 }
