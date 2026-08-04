@@ -3,7 +3,8 @@
 /user/build/
 *.o
 *.d
-
+*.img
+*.txt
 # Kernel binaries
 /kernel-rv
 /kernel-la

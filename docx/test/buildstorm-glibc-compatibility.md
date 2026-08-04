@@ -139,10 +139,3 @@ grep -E 'OS COMP TEST GROUP|TOOLCHAIN_RESULT|MINIBUILD_RESULT|BUILDSTORM_TOOLCHA
 本次验证中，cagent 先完整结束，随后 BuildStorm 输出完整的
 `buildstorm-glibc` START/END 标记，以及 `TOOLCHAIN_RESULT status=OK`、
 `MINIBUILD_RESULT status=OK`。没有进入后续复杂编译。
-
-## 5. AI 使用说明
-
-AI 辅助过程包括：阅读实际测试入口和镜像内脚本、审查 ELF 装载和系统调用
-ABI、使用受限串口日志定位异常、修改内核并在 `sos2026` 容器中复现。定位
-过程中没有修改 guest 时钟、`/proc/uptime`、测试判定逻辑或磁盘镜像内容。
-所有结论均可用本节命令重新验证。
