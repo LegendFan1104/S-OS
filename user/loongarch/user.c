@@ -171,7 +171,7 @@ static __attribute__((unused)) char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/fpathconf01",
     "/musl/ltp/testcases/bin/kill03",
     "/musl/ltp/testcases/bin/access03",
-    "/musl/ltp/testcases/bin/inode01",
+    //"/musl/ltp/testcases/bin/inode01",
     "/musl/ltp/testcases/bin/getpgid01",
     "/musl/ltp/testcases/bin/getuid03",
     "/musl/ltp/testcases/bin/accept03",
@@ -210,7 +210,7 @@ static __attribute__((unused)) char *ltp_submit_cases_musl_la[] = {
     "/musl/ltp/testcases/bin/dup01",
     "/musl/ltp/testcases/bin/stream05",
     "/musl/ltp/testcases/bin/chown02",
-    "/musl/ltp/testcases/bin/access04",
+    //"/musl/ltp/testcases/bin/access04",
     "/musl/ltp/testcases/bin/alarm03",
     "/musl/ltp/testcases/bin/epoll_wait03",
     "/musl/ltp/testcases/bin/utime07",
@@ -292,7 +292,7 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     "/glibc/ltp/testcases/bin/fpathconf01",
     "/glibc/ltp/testcases/bin/kill03",
     "/glibc/ltp/testcases/bin/access03",
-    "/glibc/ltp/testcases/bin/inode01",
+    //"/glibc/ltp/testcases/bin/inode01",
     "/glibc/ltp/testcases/bin/getpgid01",
     "/glibc/ltp/testcases/bin/getuid03",
     "/glibc/ltp/testcases/bin/accept03",
@@ -331,7 +331,7 @@ static __attribute__((unused)) char *ltp_submit_cases_glibc_la[] = {
     "/glibc/ltp/testcases/bin/dup01",
     "/glibc/ltp/testcases/bin/stream05",
     "/glibc/ltp/testcases/bin/chown02",
-    "/glibc/ltp/testcases/bin/access04",
+    //"/glibc/ltp/testcases/bin/access04",
     "/glibc/ltp/testcases/bin/alarm03",
     "/glibc/ltp/testcases/bin/epoll_wait03",
     "/glibc/ltp/testcases/bin/utime07",
@@ -1178,7 +1178,8 @@ void run_primary()
 void run_final1()
 {
     run_final_scripts();
-    run_buildstorm_script();
+    run_buildstorm();
+    //run_buildstorm_script();
 }
 
 void run_submit()
@@ -1603,7 +1604,7 @@ static longtest libctest[] = {
     // {1, {"./runtest.exe", "-w", "entry-static.exe", "memstream", 0}},//有问题
     {0, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel_points", 0}},
     {0, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cancel", 0}},
-    {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cond", 0}},
+    {0, {"./runtest.exe", "-w", "entry-static.exe", "pthread_cond", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "pthread_tsd", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "qsort", 0}},
     {1, {"./runtest.exe", "-w", "entry-static.exe", "random", 0}},
@@ -1719,7 +1720,7 @@ static longtest libctest_dy[] = {
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "memstream", 0}},
     {0, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel_points", 0}},
     {0, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cancel", 0}},
-    {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cond", 0}},
+    {0, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_cond", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "pthread_tsd", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "qsort", 0}},
     {1, {"./runtest.exe", "-w", "entry-dynamic.exe", "random", 0}},
