@@ -63,6 +63,7 @@ void proc_init(void)
     for (p = pool; p < &pool[NPROC]; p++)
     {
         initlock(&p->lock, "proc");
+        initlock(&p->vma_lock, "vma");
         p->state = UNUSED;
         p->exit_state = 0;
         p->kstack = KSTACK((int)(p - pool));
@@ -804,6 +805,7 @@ uint64 fork(void)
     {
         panic("fork:allocproc fail");
     }
+    acquire(&p->vma_lock);
     if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) ///< 复制父进程页表到子进程（包含代码段、数据段等）
         panic("fork:uvmcopy fail");
     struct vma *nvma = vma_copy(np, p->vma);
@@ -819,12 +821,14 @@ uint64 fork(void)
                 if (vma_map(p->pagetable, np->pagetable, nvma) < 0)
                 {
                     panic("fork: vma deep mapping failed\n");
+                    release(&p->vma_lock);
                     return -1;
                 }
             }
             nvma = nvma->next;
         }
     }
+    release(&p->vma_lock);
     np->sz = p->sz; ///< 继承父进程内存大小
     np->virt_addr = p->virt_addr;
     np->parent = p;
@@ -877,6 +881,7 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     {
         panic("fork:allocproc fail");
     }
+    acquire(&p->vma_lock);
     if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) ///< 复制父进程页表到子进程（包含代码段、数据段等）
         panic("fork:uvmcopy fail");
     struct vma *nvma = vma_copy(np, p->vma);
@@ -892,12 +897,14 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
                 if (vma_map(p->pagetable, np->pagetable, nvma) < 0)
                 {
                     panic("fork: vma deep mapping failed\n");
+                    release(&p->vma_lock);
                     return -1;
                 }
             }
             nvma = nvma->next;
         }
     }
+    release(&p->vma_lock);
     np->sz = p->sz; ///< 继承父进程内存大小
     np->virt_addr = p->virt_addr;
     np->parent = p;

@@ -80,7 +80,7 @@ void machine_trap(void)
     panic("machine error");
 }
 
-int pagefault_handler(uint64 addr)
+static int pagefault_handler_locked(uint64 addr)
 {
     proc_t *p = myproc();
     if (p == NULL || addr >= MAXVA)
@@ -231,6 +231,20 @@ int pagefault_handler(uint64 addr)
 
     return 0;
 }
+
+int pagefault_handler(uint64 addr)
+{
+    proc_t *p = myproc();
+    int ret;
+
+    if (p == NULL || addr >= MAXVA)
+        return -1;
+    acquire(&p->vma_lock);
+    ret = pagefault_handler_locked(addr);
+    release(&p->vma_lock);
+    return ret;
+}
+
 /**
  * @brief 设置异常处理函数到uservec,对于U态的异常
  */
