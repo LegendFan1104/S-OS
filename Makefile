@@ -29,6 +29,12 @@ export FINAL_DEV_DIAG ?= 0
 export CFLAGS += -DFINAL_DEV_DIAG=$(FINAL_DEV_DIAG)
 export STACK_COPYOUT_DIAG ?= 0
 export CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
+# 板载 SATA 驱动开关：make board-la/board-bin SATA_DRIVER=1 时，
+# kernel 的块设备走 2K1000 片上 SATA(AHCI) 而不是 QEMU virtio-blk。
+export SATA_DRIVER ?= 0
+ifeq ($(SATA_DRIVER),1)
+export CFLAGS += -DSATA_DRIVER=1
+endif
 export LDFLAGS = -z max-page-size=4096
 export WORKPATH = $(shell pwd)
 export BUILDPATH = $(WORKPATH)/build/loongarch#build/loongarch
@@ -114,6 +120,7 @@ FS_SIZE_MB = 512
 
 # .PHONY 是一个伪规则，其后面依赖的规则目标会成为一个伪目标，使得规则执行时不会实际生成这个目标文件
 .PHONY: all build-all-kernels la init_la_dir compile_all load_kernel clean la_qemu
+.PHONY: board-la board-bin board-rv board-rv-bin
 .PHONY: ltp-musl-la ltp-glibc-la ltp-musl-rv ltp-glibc-rv probe-rv buildstorm-rv buildstorm-la
 .PHONY: run-final-rv run-final-la smoke-final
 
@@ -138,6 +145,34 @@ build-all-kernels: init_la_dir init_rv_dir
 	cp $(rv_kernel) ./kernel-rv
 
 la: init_la_dir compile_all load_kernel
+
+#----------------------------------------------------------------------------------------------------
+# 2K1000 真板上运行（SATA/AHCI）
+# 用法: make clean && make board-bin SATA_DRIVER=1
+# 产物: kernel-la-board.bin
+# U-Boot: tftpboot 0x90000000 kernel-la-board.bin; go 0x90000000
+#----------------------------------------------------------------------------------------------------
+board-la: init_la_dir
+	$(MAKE) la -C user/loongarch
+	$(MAKE) -C hal/loongarch
+	$(MAKE) -C kernel
+	$(MAKE) -C hsai
+	$(MAKE) load_kernel
+
+board-bin: board-la
+	loongarch64-linux-gnu-objcopy -O binary build/loongarch/kernel-la kernel-la-board.bin
+	@echo "==> board image: kernel-la-board.bin"
+
+# VisionFive 2 真板上运行（SD/MMC）
+# 用法: make clean && make board-rv-bin SDMMC_DRIVER=1
+# 产物: kernel-rv-board.bin
+# U-Boot: tftpboot 0x80200000 kernel-rv-board.bin; go 0x80200000
+board-rv: clean_rv init_rv_dir sbi_compile_riscv
+	$(RISCV_LD) $(RISCV_LDFLAGS) -T $(SBI_RISCV_LD_SCRIPT) -o $(rv_kernel) $(rv_objs)
+
+board-rv-bin: board-rv
+	riscv64-linux-gnu-objcopy -O binary build/riscv/kernel-rv kernel-rv-board.bin
+	@echo "==> board-rv image: kernel-rv-board.bin"
 
 init_la_dir:
 	mkdir -p $(BUILDPATH)/kernel
@@ -255,6 +290,13 @@ export RISCV_CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export RISCV_LDFLAGS = -z max-page-size=4096
 
 export RISCV_CFLAGS += -DRISCV=1 #宏
+# 板载 SD/MMC 驱动开关：make board-rv/board-rv-bin SDMMC_DRIVER=1 时，
+# riscv kernel 的块设备走 VisionFive 2 (JH7110) SD/MMC 而不是 QEMU virtio-blk。
+# 注意：必须放在 RISCV_CFLAGS 定义之后，否则会被后面的赋值覆盖。
+export SDMMC_DRIVER ?= 0
+ifeq ($(SDMMC_DRIVER),1)
+export RISCV_CFLAGS += -DSDMMC_DRIVER=1
+endif
 
 RISCV_LD_SCRIPT =hal/riscv/ld.script
 

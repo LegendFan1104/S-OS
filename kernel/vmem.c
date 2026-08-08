@@ -41,6 +41,11 @@ void vmem_init()
     /*PLIC映射*/
     mappages(kernel_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
 
+    /*VisionFive 2 JH7110 SD/MMC 控制器映射（板载版）*/
+#if defined SDMMC_DRIVER
+    mappages(kernel_pagetable, SDMMC0, SDMMC0, PGSIZE, PTE_R | PTE_W);
+#endif
+
     /*kernel代码区映射 映射为可读可执行*/
     mappages(kernel_pagetable, KERNEL_BASE, KERNEL_BASE, (uint64)&KERNEL_TEXT - KERNEL_BASE, PTE_R | PTE_X);
     LOG("[MAP] KERNEL_BASE:%p ->  KERNEL_TEXT:%p  len: 0x%x\n", KERNEL_BASE, (uint64)&KERNEL_TEXT, (uint64)&KERNEL_TEXT - KERNEL_BASE);

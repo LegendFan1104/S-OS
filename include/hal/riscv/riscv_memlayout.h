@@ -30,6 +30,10 @@
 //#define VIRTIO0 0x10001000UL
 #define VIRTIO0_IRQ 1
 
+// StarFive JH7110 (VisionFive 2) SD/MMC 控制器
+// microSD 卡槽 = SDIO1 @ 0x16020000，eMMC = SDIO0 @ 0x16010000
+#define SDMMC0 0x16020000UL
+
 // core local interruptor (CLINT), which contains the timer.
 #define CLINT 0x2000000L
 #define CLINT_MTIMECMP(hartid) (CLINT + 0x4000 + 8*(hartid))
