@@ -133,9 +133,17 @@ bread(uint dev, uint blockno)
   if(!b->valid) {
     if (dev == 0) {
 #ifdef RISCV
+#if defined SDMMC_DRIVER
+      sdmmc_rw(b, 0);
+#else
       virtio_rw(b, 0);
+#endif
+#else
+#if defined SATA_DRIVER
+      la_sata_disk_rw(b, 0);
 #else
       la_virtio_disk_rw(b, 0);
+#endif
 #endif
     } 
     // else {
@@ -161,9 +169,17 @@ bwrite(struct buf *b)
     panic("bwrite");
   if (b->dev == 0) {
 #ifdef RISCV
+#if defined SDMMC_DRIVER
+    sdmmc_rw(b, 1);
+#else
     virtio_rw(b, 1);
+#endif
+#else
+#if defined SATA_DRIVER
+    la_sata_disk_rw(b, 1);
 #else
     la_virtio_disk_rw(b, 1);
+#endif
 #endif
   } 
   // else {

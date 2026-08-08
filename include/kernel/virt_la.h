@@ -34,5 +34,7 @@
 
 void la_virtio_disk_rw(struct buf *b, int write);
 void la_virtio_disk_init(void);
+void la_sata_disk_rw(struct buf *b, int write);
+void sata_init(void);
 
 #endif ///< __VIRT_LA_H__
