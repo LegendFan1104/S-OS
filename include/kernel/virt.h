@@ -109,3 +109,7 @@ void virtio_disk_init();
 int virtio_rw(struct buf *b, int write);
 
 void virtio_disk_intr();
+
+// VisionFive 2 (JH7110) SD/MMC 驱动
+void sdmmc_init(void);
+int sdmmc_rw(struct buf *b, int write);

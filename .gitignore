@@ -5,6 +5,7 @@
 *.d
 *.img
 *.txt
+*.bin
 # Kernel binaries
 /kernel-rv
 /kernel-la

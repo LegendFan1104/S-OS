@@ -50,6 +50,7 @@ int riscv_platform_hart = 0;
 #else
 extern void virtio_probe();
 extern void la_virtio_disk_init(); 
+extern void sata_init();
 #endif
 
 #if defined RISCV
@@ -115,10 +116,18 @@ int sos_start_kernel()
     plicinit();
     plicinithart();
     timer_init();
+#if defined SDMMC_DRIVER
+    sdmmc_init();//VisionFive 2 真板: JH7110 SD/MMC
+#else
     virtio_disk_init();
+#endif
 #else 
+#if defined SATA_DRIVER
+    sata_init();//2K1000 真板: 片上 SATA (AHCI)
+#else
     virtio_probe();//发现virtio-blk-pci设备
     la_virtio_disk_init();
+#endif
 #endif
     // 初始化文件系统
     init_fs();
