@@ -11,7 +11,7 @@
 
 #define DEFAULT_CLK_FREQ 100000000UL
 
-#define TICK_HZ 10UL
+#define TICK_HZ 100UL
 extern uint64 timer_freq;
 extern uint64 timer_interval;
 

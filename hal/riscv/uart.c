@@ -145,6 +145,12 @@ uartstart()
 void
 uartputc(int c)
 {
+#if defined SBI
+  /* 板载/QEMU(SBI) 下直接走 OpenSBI 控制台（与内核 printf 同一路径），
+   * 避免依赖 UART TX 中断唤醒（devintr 未处理 uartintr，会永远睡死） */
+  console_putchar(c);
+  return;
+#else
   acquire(&uart_tx_lock);
 
   if(panicked){
@@ -153,13 +159,16 @@ uartputc(int c)
   }
   while(uart_tx_w == uart_tx_r + UART_TX_BUF_SIZE){
     // buffer is full.
-    // wait for uartstart() to open up space in the buffer.
-    sleep_on_chan(&uart_tx_r, &uart_tx_lock);
+    // 不依赖 TX 中断：同步等 THR 空闲后发送一个字符腾出空间
+    while((ReadReg(LSR) & LSR_TX_IDLE) == 0)
+      ;
+    uartstart();
   }
   uart_tx_buf[uart_tx_w % UART_TX_BUF_SIZE] = c;
   uart_tx_w += 1;
   uartstart();
   release(&uart_tx_lock);
+#endif
 }
 
 // alternate version of uartputc() that doesn't 
@@ -185,4 +194,3 @@ void _write_reg( uint8 reg, uint8 data ) //< 这个函数在别的地方没有�
 {
     WriteReg(reg,data);
 }
-
