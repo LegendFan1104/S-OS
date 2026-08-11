@@ -69,10 +69,19 @@ static void refresh_process_timer(proc_t *p, uint64 now)
 #define LS7A_RTC 0x100d0100
 #define LS7A_RTC_TIME_REG (*(volatile uint32_t *)((LS7A_RTC + 0x00) | dmwin_win0))
 
+#ifdef BOARD_JH7110
+/* VisionFive 2 (JH7110) 没有 Goldfish RTC；CLINT time 频率为 4MHz */
+#define JH7110_CLK_FREQ 4000000UL
+#endif
+
 static uint64
 read_rtc_seconds(void)
 {
 #ifdef RISCV
+#ifdef BOARD_JH7110
+    /* 真板无 RTC 可读，返回固定基准时间（与 sanitize_boot_time 回退值一致） */
+    return 1735689600ULL;
+#else
     uint32 high0;
     uint32 high1;
     uint32 low;
@@ -87,6 +96,7 @@ read_rtc_seconds(void)
     } while (high0 != high1);
 
     return ((((uint64)high0 << 32) | low) / 1000000000ULL);
+#endif
 #else
     return LS7A_RTC_TIME_REG;
 #endif
@@ -100,6 +110,7 @@ sanitize_boot_time(uint64 rtc_sec)
     return rtc_sec;
 }
 
+#ifndef BOARD_JH7110
 static uint64
 wait_rtc_second_change(uint64 prev, uint64 max_poll)
 {
@@ -111,6 +122,7 @@ wait_rtc_second_change(uint64 prev, uint64 max_poll)
     }
     return prev;
 }
+#endif
 
 static uint64
 sanitize_timer_freq(uint64 freq)
@@ -123,6 +135,10 @@ sanitize_timer_freq(uint64 freq)
 static uint64
 calibrate_timer_freq_from_rtc(void)
 {
+#ifdef BOARD_JH7110
+    /* 真板没有 RTC 用于差分测频，直接使用 JH7110 的 CLINT time 频率 */
+    return JH7110_CLK_FREQ;
+#else
     uint64 sec0, sec1;
     uint64 t0, t1;
 
@@ -142,6 +158,7 @@ calibrate_timer_freq_from_rtc(void)
         return 0;
 
     return t1 - t0;
+#endif
 }
 
 uint64 boot_time = 0;

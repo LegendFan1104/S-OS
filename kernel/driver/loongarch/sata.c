@@ -13,28 +13,31 @@
 /*
  * 2K1000 板上 SATA 驱动（AHCI 1.3）
  * ------------------------------------------------------------------
+ * 移植自 U-Boot drivers/ata/ahci.c（2K1000 的 U-Boot `sata` 命令同源），
+ * 寄存器偏移/位定义与 U-Boot include/ahci.h、Linux drivers/ata/ahci.h
+ * 一致；流程对应：
+ *   ahci_reset / ahci_host_init / ahci_link_up / wait_spinup /
+ *   ahci_port_start / ahci_fill_sg / ahci_fill_cmd_slot /
+ *   ahci_device_data_io
+ * 采用轮询完成（PxCI 位清 0），不依赖中断。
+ *
  * 2K1000 的 SATA 控制器是 SoC 内部 PCI 设备：
  *   vendor = 0x0014 (Loongson), device = 0x7a08, class = 0x010601
  *   Linux 设备树: /bus@10000000/pci@1a000000/sata@8,0 (device 8, fn 0)
- *   PCI 配置空间(ECAM)物理基址: 0x1a000000（可用板子自带 Linux 的
- *   /proc/iomem 核对，如不同用 -DSATA_PCIE_ECAM_PHYS=0x... 覆盖）
- *   BAR 指向的 AHCI HBA 寄存器经 DMW1 (0x8000...) 非缓存窗口访问
- *
- * 参考: AHCI 1.3 规范、Linux drivers/ata/ahci.c + ahci_loongson.c
- * 与 QEMU virtio 不同，本驱动采用轮询完成（与 la_virtio_disk_rw 一致），
- * 不依赖外部中断，便于真板先跑通。
+ *   PCI 配置空间(ECAM)物理基址: 0x1a000000（可用 -DSATA_PCIE_ECAM_PHYS= 覆盖）
+ *   AHCI HBA 的 ABAR 在 PCI BAR5（AHCI 规范，Linux/U-Boot 均取 BAR5），
+ *   经 DMW1 (0x8000...) 非缓存窗口访问。
  */
 
 #define LA_DMW0_MASK 0x9000000000000000ULL
 #define LA_DMW1_MASK 0x8000000000000000ULL
 
-/* 直映射窗口别名互转（与 virtio_disk.c 相同）：
- * 设备 DMA 直接读写物理内存，CPU 必须通过 DMW1 非缓存别名访问
- * 共享结构，避免缓存脏数据掩盖设备写入。 */
+/* 直映射窗口别名互转：设备 DMA 直接读写物理内存，CPU 必须通过
+ * DMW1 非缓存别名访问共享结构，避免缓存脏数据掩盖设备写入。 */
 #define LA_UNCACHED(ptr) \
     ((void *)(((uint64)(ptr) & ~LA_DMW0_MASK) | LA_DMW1_MASK))
 /* 由窗口别名得到物理地址（剥掉 0x9000/0x8000 窗口位） */
-#define PA2VA(pa) ((uint64)(pa) & ~(LA_DMW0_MASK))
+#define PA2VA(ptr) ((uint64)(ptr) & ~(LA_DMW0_MASK))
 
 #ifndef SATA_PCIE_ECAM_PHYS
 #define SATA_PCIE_ECAM_PHYS 0x1a000000UL
@@ -45,56 +48,65 @@
 #define LS2K_SATA_DEV    8
 #define LS2K_SATA_FN     0
 
-/* AHCI 全局寄存器（字节偏移） */
-#define AHCI_CAP 0x00
-#define AHCI_GHC 0x04
-#define AHCI_IS  0x08
-#define AHCI_PI  0x0c
-#define AHCI_VS  0x10
+/* ---- AHCI 全局寄存器（U-Boot/Linux ahci.h 一致） ---- */
+#define HOST_CAP        0x00
+#define HOST_CTL        0x04
+#define HOST_IRQ_STAT   0x08
+#define HOST_PORTS_IMPL 0x0c
+#define HOST_VERSION    0x10
+#define HOST_CAP2       0x24
 
-#define AHCI_PORT_BASE   0x100
-#define AHCI_PORT_STRIDE 0x80
+#define HOST_RESET    (1U << 0)   /* 控制器复位，自清 */
+#define HOST_IRQ_EN   (1U << 1)
+#define HOST_AHCI_EN  (1U << 31)
 
-/* AHCI 端口寄存器（相对端口基址的字节偏移） */
-#define PX_CLB  0x00
-#define PX_CLBU 0x04
-#define PX_FB   0x08
-#define PX_FBU  0x0c
-#define PX_IS   0x10
-#define PX_IE   0x14
-#define PX_CMD  0x18
-#define PX_TFD  0x20
-#define PX_SIG  0x24
-#define PX_SSTS 0x28
-#define PX_SCTL 0x2c
-#define PX_SERR 0x30
-#define PX_CI   0x38
+/* ---- AHCI 端口寄存器 ---- */
+#define PORT_BASE      0x100
+#define PORT_STRIDE    0x80
 
-#define GHC_HR (1U << 0)
-#define GHC_IE (1U << 1)
-#define GHC_AE (1U << 31)
+#define PORT_LST_ADDR      0x00
+#define PORT_LST_ADDR_HI   0x04
+#define PORT_FIS_ADDR      0x08
+#define PORT_FIS_ADDR_HI   0x0c
+#define PORT_IRQ_STAT      0x10
+#define PORT_IRQ_MASK      0x14
+#define PORT_CMD           0x18
+#define PORT_TFDATA        0x20
+#define PORT_SIG           0x24
+#define PORT_SCR_STAT      0x28
+#define PORT_SCR_CTL       0x2c
+#define PORT_SCR_ERR       0x30
+#define PORT_CMD_ISSUE     0x38
 
-#define PX_CMD_ST  (1U << 0)
-#define PX_CMD_SUD (1U << 1)
-#define PX_CMD_POD (1U << 2)
-#define PX_CMD_FRE (1U << 4)
-#define PX_CMD_FR  (1U << 14)
-#define PX_CMD_CR  (1U << 15)
+#define PORT_CMD_START      (1U << 0)
+#define PORT_CMD_SPIN_UP    (1U << 1)
+#define PORT_CMD_POWER_ON   (1U << 2)
+#define PORT_CMD_FIS_RX     (1U << 4)
+#define PORT_CMD_FIS_ON     (1U << 14)
+#define PORT_CMD_LIST_ON    (1U << 15)
+#define PORT_CMD_ICC_ACTIVE (1U << 28)
 
-#define PX_IS_TFES (1U << 30)
+#define PORT_IRQ_TF_ERR     (1U << 30)
 
-#define PX_TFD_ERR (1U << 0)
-#define PX_TFD_BSY (1U << 7)
-#define PX_TFD_DRQ (1U << 3)
+#define PORT_SCR_STAT_DET_MASK   0x3U
+#define PORT_SCR_STAT_DET_PHYRDY 0x3U
 
-#define PX_SSTS_DET_MASK 0x0fU
-#define PX_SSTS_DET_DEV  0x03U
+#define ATA_BUSY 0x80U
+#define ATA_DRQ  0x08U
 
-#define ATA_CMD_IDENTIFY      0xEC
-#define ATA_CMD_READ_DMA_EXT  0x25
-#define ATA_CMD_WRITE_DMA_EXT 0x35
+#define ATA_CMD_ID_ATA     0xEC
+#define ATA_CMD_READ_EXT   0x25
+#define ATA_CMD_WRITE_EXT  0x35
+#define ATA_SECT_SIZE      512
 
-/* 忙等上限（近似；2K1000 主频约 1GHz，1 亿次循环约几百毫秒） */
+#define AHCI_MAX_SG       56
+#define AHCI_MAX_CMD_SLOT 32
+#define AHCI_CMD_SLOT_SZ  32
+#define AHCI_RX_FIS_SZ    256
+#define AHCI_CMD_TBL_HDR  0x80
+#define MAX_DATA_BYTE_COUNT (4 * 1024 * 1024)
+
+/* 忙等上限（近似；2K1000 主频约 1GHz） */
 #define SATA_POLL_MAX 200000000ULL
 #define SATA_IO_MAX   100000000ULL
 
@@ -102,25 +114,22 @@
 #define SATA_SLOT 0
 
 struct ahci_cmd_hdr {
-    uint32 dw0;      /* bits4:0 cfl; bit5 a; bit6 w; bit7 p; bit8 c; bit9 r */
-    uint32 dw1;      /* bits15:0 prdtl */
-    uint32 ctba;     /* command table base address (低32位) */
-    uint32 ctbau;
+    uint32 opts;
+    uint32 status;
+    uint32 tbl_addr;
+    uint32 tbl_addr_hi;
     uint32 rsvd[4];
 };
 
-struct ahci_prd {
-    uint32 dba;
-    uint32 dbau;
-    uint32 rsvd;
-    uint32 dbc;      /* bit31 i; bits21:0 字节数-1 */
+struct ahci_sg {
+    uint32 addr;
+    uint32 addr_hi;
+    uint32 flags_size;
 };
 
 struct ahci_cmd_tbl {
-    uint8 cfis[64];
-    uint8 acmd[16];
-    uint8 rsvd[48];
-    struct ahci_prd prd[1];
+    uint8 cfis[AHCI_CMD_TBL_HDR];
+    struct ahci_sg sg[1];
 };
 
 static volatile uint32 *sata_hba;   /* AHCI HBA，DMW1 非缓存别名 */
@@ -129,22 +138,22 @@ static uint32 sata_cfg_base;        /* 找到的设备的配置偏移 */
 static int sata_ready = 0;
 static int sata_port = 0;
 static uint64 sata_nsectors = 0;    /* 512 字节扇区数 */
-static uint32 sata_irq = 0;
+static uint32 sata_cap = 0;
 static struct spinlock sata_lock;
 
 /* 与 HBA 共享的 DMA 结构：CPU 访问必须走 LA_UNCACHED 别名，
  * 硬件地址用 PA2VA(...) 得到物理地址。 */
-static uint8 sata_cmdlist[1024] __attribute__((aligned(1024)));
-static uint8 sata_cmdtbl[256] __attribute__((aligned(128)));
-static uint8 sata_fis[256] __attribute__((aligned(256)));
+static uint8 sata_cmdlist[AHCI_CMD_SLOT_SZ * AHCI_MAX_CMD_SLOT]
+    __attribute__((aligned(2048)));
+static uint8 sata_fis[AHCI_RX_FIS_SZ] __attribute__((aligned(256)));
+static uint8 sata_cmdtbl[AHCI_CMD_TBL_HDR + 16] __attribute__((aligned(128)));
 static uchar sata_dma[BSIZE] __attribute__((aligned(64)));
 static uchar sata_ident[512] __attribute__((aligned(64)));
 
-#define SATA_REG32(off) \
-    (*(volatile uint32 *)((uint64)sata_hba + (off)))
-#define SATA_PORT32(off) \
-    (*(volatile uint32 *)((uint64)sata_hba + AHCI_PORT_BASE + \
-                          ((uint64)sata_port * AHCI_PORT_STRIDE) + (off)))
+#define HBA32(off) (*(volatile uint32 *)((uint64)sata_hba + (off)))
+#define PORT32(off) \
+    (*(volatile uint32 *)((uint64)sata_hba + PORT_BASE + \
+                          ((uint64)sata_port * PORT_STRIDE) + (off)))
 
 /* ------------------------------------------------------------------ */
 /* PCI 配置空间访问                                                    */
@@ -192,154 +201,243 @@ static int sata_wait_clear(volatile uint32 *reg, uint32 mask, uint64 max)
 }
 
 /* ------------------------------------------------------------------ */
-/* AHCI 端口初始化                                                     */
+/* AHCI 初始化（对应 U-Boot ahci_reset + ahci_host_init）               */
 /* ------------------------------------------------------------------ */
 
-static int sata_port_init(void)
+static int sata_hba_reset(void)
 {
-    uint32 pi = SATA_REG32(AHCI_PI);
-    uint32 cmd;
+    uint32 tmp;
+    uint64 i;
 
-    if (pi == 0 || pi == 0xffffffffU)
+    tmp = HBA32(HOST_CTL);
+    if ((tmp & HOST_RESET) == 0)
+        HBA32(HOST_CTL) = tmp | HOST_RESET;
+
+    /* 复位必须完成，否则硬件视为故障 */
+    for (i = 0; i < SATA_POLL_MAX && (HBA32(HOST_CTL) & HOST_RESET); i++)
+        ;
+    if (i == SATA_POLL_MAX)
     {
-        printf("[sata] no port implemented (PI=0x%x)\n", pi);
+        printf("[sata] controller reset failed (0x%x)\n", HBA32(HOST_CTL));
         return -1;
     }
-
-    /* 取最低的已实现端口 */
-    sata_port = 0;
-    while (!(pi & (1U << sata_port)))
-        sata_port++;
-
-    /* 停止端口 */
-    cmd = SATA_PORT32(PX_CMD);
-    SATA_PORT32(PX_CMD) = cmd & ~(PX_CMD_ST | PX_CMD_FRE);
-    if (sata_wait_clear(&SATA_PORT32(PX_CMD), PX_CMD_CR | PX_CMD_FR,
-                        SATA_POLL_MAX) != 0)
-    {
-        printf("[sata] port %d cannot stop\n", sata_port);
-        return -1;
-    }
-
-    /* 命令列表与 FIS 接收区 */
-    memset(LA_UNCACHED(sata_cmdlist), 0, sizeof(sata_cmdlist));
-    memset(LA_UNCACHED(sata_fis), 0, sizeof(sata_fis));
-    SATA_PORT32(PX_CLB) = (uint32)PA2VA(LA_UNCACHED(sata_cmdlist));
-    SATA_PORT32(PX_CLBU) = 0;
-    SATA_PORT32(PX_FB) = (uint32)PA2VA(LA_UNCACHED(sata_fis));
-    SATA_PORT32(PX_FBU) = 0;
-
-    /* PHY 复位并清错误 */
-    SATA_PORT32(PX_SCTL) = 1;
-    SATA_PORT32(PX_SCTL) = 0;
-    SATA_PORT32(PX_SERR) = 0xffffffffU;
-    SATA_PORT32(PX_IS) = 0xffffffffU;
-
-    /* 等待设备接入 (DET=3) */
-    {
-        uint64 i;
-        for (i = 0; i < SATA_POLL_MAX; i++)
-        {
-            if ((SATA_PORT32(PX_SSTS) & PX_SSTS_DET_MASK) == PX_SSTS_DET_DEV)
-                break;
-        }
-        if (i == SATA_POLL_MAX)
-        {
-            printf("[sata] no device on port %d (SSTS=0x%x)\n",
-                   sata_port, SATA_PORT32(PX_SSTS));
-            return -1;
-        }
-    }
-
-    /* 打开端口（轮询模式，屏蔽中断） */
-    SATA_PORT32(PX_CMD) |= PX_CMD_POD | PX_CMD_SUD;
-    SATA_PORT32(PX_CMD) |= PX_CMD_FRE;
-    SATA_PORT32(PX_IE) = 0;
-    SATA_PORT32(PX_IS) = 0xffffffffU;
-    SATA_PORT32(PX_CMD) |= PX_CMD_ST;
-    __sync_synchronize();
-
-    printf("[sata] port %d ready\n", sata_port);
     return 0;
 }
 
+/* 等待 SATA 链路就绪（DET == PHYRDY） */
+static int sata_link_up(void)
+{
+    uint64 i;
+    for (i = 0; i < SATA_POLL_MAX; i++)
+    {
+        if ((PORT32(PORT_SCR_STAT) & PORT_SCR_STAT_DET_MASK) ==
+            PORT_SCR_STAT_DET_PHYRDY)
+            return 0;
+    }
+    return -1;
+}
+
+/* 等待设备 spinup 完成（TFDATA 不再 busy） */
+static int sata_wait_spinup(void)
+{
+    uint64 i;
+    for (i = 0; i < SATA_POLL_MAX; i++)
+    {
+        if (!(PORT32(PORT_TFDATA) & (ATA_BUSY | ATA_DRQ)))
+            return 0;
+    }
+    return -1;
+}
+
+/* 对应 U-Boot ahci_host_init：复位 HBA、使能 AHCI、逐端口 linkup */
+static int sata_host_init(void)
+{
+    uint32 cap_save, tmp;
+    int i;
+
+    cap_save = HBA32(HOST_CAP);
+    cap_save &= ((1U << 28) | (1U << 17));
+    cap_save |= (1U << 27); /* staggered spin-up */
+
+    if (sata_hba_reset() != 0)
+        return -1;
+
+    HBA32(HOST_CTL) = HOST_AHCI_EN;
+    HBA32(HOST_CAP) = cap_save;
+    /* U-Boot 对部分控制器强制写端口实现位再读回 */
+    HBA32(HOST_PORTS_IMPL) = 0xf;
+    sata_cap = HBA32(HOST_CAP);
+
+    for (i = 0; i < 32; i++)
+    {
+        uint32 port_map = HBA32(HOST_PORTS_IMPL);
+
+        if (!(port_map & (1U << i)))
+            continue;
+        sata_port = i;
+
+        /* 端口未激活则停掉 */
+        tmp = PORT32(PORT_CMD);
+        if (tmp & (PORT_CMD_LIST_ON | PORT_CMD_FIS_ON |
+                   PORT_CMD_FIS_RX | PORT_CMD_START))
+        {
+            tmp &= ~(PORT_CMD_LIST_ON | PORT_CMD_FIS_ON |
+                     PORT_CMD_FIS_RX | PORT_CMD_START);
+            PORT32(PORT_CMD) = tmp;
+            /* 规范要求 500ms/位，这里轮询等待引擎停 */
+            sata_wait_clear(&PORT32(PORT_CMD),
+                            PORT_CMD_LIST_ON | PORT_CMD_FIS_ON,
+                            SATA_POLL_MAX);
+        }
+
+        /* spin up + 等待链路 */
+        tmp = PORT32(PORT_CMD);
+        tmp |= PORT_CMD_SPIN_UP;
+        PORT32(PORT_CMD) = tmp;
+
+        if (sata_link_up() != 0)
+        {
+            printf("[sata] SATA link %d timeout\n", i);
+            continue;
+        }
+
+        /* 清错误并等设备就绪 */
+        tmp = PORT32(PORT_SCR_ERR);
+        if (tmp)
+            PORT32(PORT_SCR_ERR) = tmp;
+        if (sata_wait_spinup() != 0)
+        {
+            printf("[sata] port %d spinup timeout\n", i);
+            continue;
+        }
+        tmp = PORT32(PORT_SCR_ERR);
+        if (tmp)
+            PORT32(PORT_SCR_ERR) = tmp;
+        tmp = PORT32(PORT_IRQ_STAT);
+        if (tmp)
+            PORT32(PORT_IRQ_STAT) = tmp;
+        HBA32(HOST_IRQ_STAT) = (1U << i);
+
+        /* 取第一个 link 起来的端口 */
+        return 0;
+    }
+
+    printf("[sata] no link on any port\n");
+    return -1;
+}
+
+/* 对应 U-Boot ahci_port_start */
+static int sata_port_start(void)
+{
+    uint32 port_status;
+
+    port_status = PORT32(PORT_SCR_STAT);
+    if ((port_status & PORT_SCR_STAT_DET_MASK) !=
+        PORT_SCR_STAT_DET_PHYRDY)
+    {
+        printf("[sata] no link on port %d (SSTS=0x%x)\n",
+               sata_port, port_status);
+        return -1;
+    }
+
+    memset(LA_UNCACHED(sata_cmdlist), 0, sizeof(sata_cmdlist));
+    memset(LA_UNCACHED(sata_fis), 0, sizeof(sata_fis));
+    memset(LA_UNCACHED(sata_cmdtbl), 0, sizeof(sata_cmdtbl));
+
+    PORT32(PORT_LST_ADDR) = (uint32)PA2VA(LA_UNCACHED(sata_cmdlist));
+    PORT32(PORT_LST_ADDR_HI) = 0;
+    PORT32(PORT_FIS_ADDR) = (uint32)PA2VA(LA_UNCACHED(sata_fis));
+    PORT32(PORT_FIS_ADDR_HI) = 0;
+
+    PORT32(PORT_CMD) = PORT_CMD_ICC_ACTIVE | PORT_CMD_FIS_RX |
+                       PORT_CMD_POWER_ON | PORT_CMD_SPIN_UP |
+                       PORT_CMD_START;
+    __sync_synchronize();
+
+    return sata_wait_spinup();
+}
+
 /* ------------------------------------------------------------------ */
-/* 命令提交（slot 0，忙等完成）                                        */
+/* 命令提交（对应 U-Boot ahci_fill_sg + ahci_fill_cmd_slot +           */
+/* ahci_device_data_io）                                               */
 /* ------------------------------------------------------------------ */
 
+static int sata_fill_sg(struct ahci_cmd_tbl *tbl, uchar *buf, int buf_len)
+{
+    struct ahci_sg *sg = &tbl->sg[0];
+    uint64 pa = PA2VA(LA_UNCACHED(buf));
+    int sg_count = ((buf_len - 1) / MAX_DATA_BYTE_COUNT) + 1;
+    int i;
+
+    if (sg_count > AHCI_MAX_SG)
+        return -1;
+
+    for (i = 0; i < sg_count; i++)
+    {
+        sg[i].addr = (uint32)(pa & 0xffffffffU);
+        sg[i].addr_hi = (uint32)(pa >> 32);
+        if (sg[i].addr_hi && !(sata_cap & (1U << 31)))
+        {
+            printf("[sata] DMA address too high\n");
+            return -1;
+        }
+        sg[i].flags_size = 0x3fffffU &
+            (buf_len < MAX_DATA_BYTE_COUNT ?
+             (uint32)(buf_len - 1) :
+             (uint32)(MAX_DATA_BYTE_COUNT - 1));
+        buf_len -= MAX_DATA_BYTE_COUNT;
+        pa += MAX_DATA_BYTE_COUNT;
+    }
+    return sg_count;
+}
+
 /*
- * 在 slot 0 上发起一条命令并等待完成。
- *   cmd        ATA 命令码
- *   write      1 = 数据方向 H2D（写盘），0 = 读盘
- *   lba        48 位扇区号
- *   scount     扇区数（1..65535）
- *   prd_phys   PRD 数据缓冲物理地址（0 表示无数据阶段）
- *   dbc        数据字节数（PRD 字节数-1 由此计算）
+ * 提交一条命令并等待完成（slot 0）。
+ *   fis       H2D Register FIS（20 字节）
+ *   buf       数据缓冲（物理内存，走 DMW1 非缓存别名）
+ *   buf_len   数据字节数
+ *   is_write  1 = 写盘（H2D），0 = 读盘
  */
-static int sata_issue(uint8 cmd, int write, uint64 lba, uint16 scount,
-                      uint32 prd_phys, uint32 dbc)
+static int sata_io(uint8 *fis, int fis_len, uchar *buf, int buf_len,
+                   int is_write)
 {
     struct ahci_cmd_hdr *hdr =
         (struct ahci_cmd_hdr *)LA_UNCACHED(sata_cmdlist);
     struct ahci_cmd_tbl *tbl =
         (struct ahci_cmd_tbl *)LA_UNCACHED(sata_cmdtbl);
-    uint8 *cfis;
+    uint32 port_status, opts;
+    int sg_count;
     uint64 i;
 
-    /* 等待端口空闲 */
-    if (sata_wait_clear(&SATA_PORT32(PX_TFD), PX_TFD_BSY | PX_TFD_DRQ,
-                        SATA_IO_MAX) != 0)
-    {
-        printf("[sata] port busy before issue (TFD=0x%x)\n",
-               SATA_PORT32(PX_TFD));
+    port_status = PORT32(PORT_SCR_STAT);
+    if ((port_status & PORT_SCR_STAT_DET_MASK) !=
+        PORT_SCR_STAT_DET_PHYRDY)
         return -1;
-    }
 
-    memset(hdr, 0, sizeof(*hdr));
     memset(tbl, 0, sizeof(*tbl));
+    memmove(LA_UNCACHED(tbl->cfis), fis, fis_len);
 
-    /* H2D Register FIS - 设备寄存器 FIS */
-    cfis = tbl->cfis;
-    cfis[0] = 0x27;                              /* FIS 类型 H2D */
-    cfis[1] = 0x80 | (write ? 0x40 : 0);         /* C=1, W=写方向 */
-    cfis[2] = cmd;
-    cfis[3] = 0;
-    cfis[4] = (uint8)(lba);
-    cfis[5] = (uint8)(lba >> 8);
-    cfis[6] = (uint8)(lba >> 16);
-    cfis[7] = 0x40;                              /* LBA 模式 */
-    cfis[8] = (uint8)(lba >> 24);
-    cfis[9] = (uint8)(lba >> 32);
-    cfis[10] = (uint8)(lba >> 40);
-    cfis[11] = 0;
-    cfis[12] = (uint8)scount;
-    cfis[13] = (uint8)(scount >> 8);
-    cfis[14] = 0;
-    cfis[15] = 0;
+    sg_count = sata_fill_sg(tbl, buf, buf_len);
+    if (sg_count < 0)
+        return -1;
 
-    if (prd_phys && dbc)
-    {
-        struct ahci_prd *prd = &tbl->prd[0];
-        prd->dba = prd_phys;
-        prd->dbau = 0;
-        prd->rsvd = 0;
-        prd->dbc = dbc - 1;
-    }
-
-    /* 命令头：cfl=5 (20B FIS)，写命令置 W，置 C(清 BSY) */
-    hdr->dw0 = 5 | (write ? (1U << 6) : 0) | (1U << 8);
-    hdr->dw1 = (prd_phys && dbc) ? 1 : 0;
-    hdr->ctba = (uint32)PA2VA(LA_UNCACHED(sata_cmdtbl));
-    hdr->ctbau = 0;
+    /* opts：cfl(命令 FIS 长度，dword) | prdtl<<16 | W(写)<<6
+     * 与 U-Boot ahci_device_data_io 完全一致 */
+    opts = (uint32)(fis_len >> 2) | ((uint32)sg_count << 16) |
+           (is_write ? (1U << 6) : 0);
+    hdr->opts = opts;
+    hdr->status = 0;
+    hdr->tbl_addr = (uint32)PA2VA(LA_UNCACHED(sata_cmdtbl));
+    hdr->tbl_addr_hi = 0;
     __sync_synchronize();
 
-    SATA_PORT32(PX_IS) = 0xffffffffU;
-    SATA_PORT32(PX_CI) = 1U << SATA_SLOT;
+    PORT32(PORT_IRQ_STAT) = 0xffffffffU;
+    PORT32(PORT_CMD_ISSUE) = 1U << SATA_SLOT;
 
-    /* 忙等命令完成 */
+    /* 忙等命令完成（PxCI 槽位清 0） */
     for (i = 0; i < SATA_IO_MAX; i++)
     {
-        if ((SATA_PORT32(PX_CI) & (1U << SATA_SLOT)) == 0)
+        if ((PORT32(PORT_CMD_ISSUE) & (1U << SATA_SLOT)) == 0)
             break;
     }
     __sync_synchronize();
@@ -347,19 +445,19 @@ static int sata_issue(uint8 cmd, int write, uint64 lba, uint16 scount,
     if (i == SATA_IO_MAX)
     {
         printf("[sata] io timeout: cmd=0x%x (CI=0x%x TFD=0x%x)\n",
-               cmd, SATA_PORT32(PX_CI), SATA_PORT32(PX_TFD));
+               fis[2], PORT32(PORT_CMD_ISSUE), PORT32(PORT_TFDATA));
         return -1;
     }
-    if (SATA_PORT32(PX_IS) & PX_IS_TFES)
+    if (PORT32(PORT_IRQ_STAT) & PORT_IRQ_TF_ERR)
     {
         printf("[sata] task file error: cmd=0x%x (TFD=0x%x)\n",
-               cmd, SATA_PORT32(PX_TFD));
+               fis[2], PORT32(PORT_TFDATA));
         return -1;
     }
-    if (SATA_PORT32(PX_TFD) & PX_TFD_ERR)
+    if (PORT32(PORT_TFDATA) & 0x1U) /* ERR 位 */
     {
         printf("[sata] tfd error: cmd=0x%x (TFD=0x%x)\n",
-               cmd, SATA_PORT32(PX_TFD));
+               fis[2], PORT32(PORT_TFDATA));
         return -1;
     }
     return 0;
@@ -371,23 +469,29 @@ static int sata_issue(uint8 cmd, int write, uint64 lba, uint16 scount,
 
 static int sata_identify(void)
 {
-    if (sata_issue(ATA_CMD_IDENTIFY, 0, 0, 0,
-                   (uint32)PA2VA(LA_UNCACHED(sata_ident)), 512) != 0)
+    uint8 fis[20];
+    volatile uint16 *id = (volatile uint16 *)LA_UNCACHED(sata_ident);
+    uint64 lba48;
+    uint32 lba28;
+
+    memset(fis, 0, sizeof(fis));
+    fis[0] = 0x27;         /* H2D FIS */
+    fis[1] = 1 << 7;       /* C：Command FIS */
+    fis[2] = ATA_CMD_ID_ATA;
+
+    if (sata_io(fis, sizeof(fis), sata_ident, 512, 0) != 0)
         return -1;
 
-    if (SATA_PORT32(PX_SIG) != 0x00000101U)
+    if (PORT32(PORT_SIG) != 0x00000101U)
     {
-        printf("[sata] unexpected signature 0x%x\n", SATA_PORT32(PX_SIG));
+        printf("[sata] unexpected signature 0x%x\n", PORT32(PORT_SIG));
         return -1;
     }
 
-    {
-        volatile uint16 *id = (volatile uint16 *)LA_UNCACHED(sata_ident);
-        uint64 lba48 = (uint64)id[100] | ((uint64)id[101] << 16) |
-                       ((uint64)id[102] << 32) | ((uint64)id[103] << 48);
-        uint32 lba28 = (uint32)id[60] | ((uint32)id[61] << 16);
-        sata_nsectors = lba48 ? lba48 : lba28;
-    }
+    lba48 = (uint64)id[100] | ((uint64)id[101] << 16) |
+            ((uint64)id[102] << 32) | ((uint64)id[103] << 48);
+    lba28 = (uint32)id[60] | ((uint32)id[61] << 16);
+    sata_nsectors = lba48 ? lba48 : lba28;
 
     printf("[sata] disk identified: %d sectors (%d MB)\n",
            (uint32)sata_nsectors, (uint32)(sata_nsectors / 2048));
@@ -454,8 +558,9 @@ void sata_init(void)
         return;
     }
 
-    /* 2. 取第一个非 IO 内存 BAR（AHCI HBA） */
-    for (i = 0; i < 6; i++)
+    /* 2. AHCI ABAR 在 BAR5（AHCI 规范，Linux/U-Boot 均用 BAR5）；
+     *    个别实现为空时回退扫描其他内存 BAR。 */
+    for (i = 5; i >= 0; i--)
     {
         uint32 v = sata_cfg_read32(0x10 + 4 * i);
         if (v == 0 || (v & 0x1U))
@@ -465,7 +570,6 @@ void sata_init(void)
         {
             uint32 hi = sata_cfg_read32(0x10 + 4 * (i + 1));
             bar_phys |= (hi & 0xfffffff0U);
-            i++;
         }
         break;
     }
@@ -474,35 +578,25 @@ void sata_init(void)
         printf("[sata] no memory BAR\n");
         return;
     }
-    sata_irq = sata_cfg_read32(0x3c) & 0xffU;
 
     /* 3. 使能 IO/内存/总线主控 */
     cmd = sata_cfg_read16(0x04);
     sata_cfg_write16(0x04, (uint16)(cmd | 0x7U));
 
-    /* 4. 映射 HBA 并复位 */
+    /* 4. 映射 HBA 并初始化 */
     sata_hba = (volatile uint32 *)(LA_DMW1_MASK | bar_phys);
-    if (SATA_REG32(AHCI_CAP) == 0xffffffffU || SATA_REG32(AHCI_CAP) == 0)
+    if (HBA32(HOST_CAP) == 0xffffffffU || HBA32(HOST_CAP) == 0)
     {
         printf("[sata] HBA invalid: CAP=0x%x (BAR=0x%x)\n",
-               SATA_REG32(AHCI_CAP), bar_phys);
+               HBA32(HOST_CAP), bar_phys);
         sata_hba = NULL;
         return;
     }
-    printf("[sata] HBA at 0x%x, irq %d\n", bar_phys, sata_irq);
+    printf("[sata] HBA at 0x%x\n", bar_phys);
 
-    SATA_REG32(AHCI_GHC) |= GHC_HR;
-    if (sata_wait_clear(&SATA_REG32(AHCI_GHC), GHC_HR, SATA_POLL_MAX) != 0)
-    {
-        printf("[sata] HBA reset timeout\n");
-        sata_hba = NULL;
-        return;
-    }
-    SATA_REG32(AHCI_GHC) |= GHC_AE;
-    __sync_synchronize();
-
-    /* 5. 端口初始化 + IDENTIFY */
-    if (sata_port_init() != 0 || sata_identify() != 0)
+    /* 5. 主机初始化 + 端口启动 + IDENTIFY */
+    if (sata_host_init() != 0 || sata_port_start() != 0 ||
+        sata_identify() != 0)
     {
         sata_hba = NULL;
         return;
@@ -520,23 +614,37 @@ void sata_init(void)
 void la_sata_disk_rw(struct buf *b, int write)
 {
     uint64 sector;
-    uint16 count;
-    int rc;
+    uint8 fis[20];
 
     if (!sata_ready)
         panic("sata: disk not ready");
 
     acquire(&sata_lock);
     sector = (uint64)b->blockno * (BSIZE / 512);
-    count = BSIZE / 512;
 
     if (write)
         memmove(LA_UNCACHED(sata_dma), b->data, BSIZE);
 
-    rc = sata_issue(write ? ATA_CMD_WRITE_DMA_EXT : ATA_CMD_READ_DMA_EXT,
-                    write, sector, count,
-                    (uint32)PA2VA(LA_UNCACHED(sata_dma)), BSIZE);
-    if (rc != 0)
+    /* H2D Register FIS（与 U-Boot ata_scsiop_read_write 相同布局） */
+    memset(fis, 0, sizeof(fis));
+    fis[0] = 0x27;                          /* H2D FIS */
+    fis[1] = 1 << 7;                        /* C：Command FIS */
+    fis[2] = write ? ATA_CMD_WRITE_EXT : ATA_CMD_READ_EXT;
+    fis[3] = 0xe0;                          /* features（U-Boot 原样） */
+    fis[4] = (uint8)(sector);
+    fis[5] = (uint8)(sector >> 8);
+    fis[6] = (uint8)(sector >> 16);
+    fis[7] = 1 << 6;                        /* device 寄存器：LBA 模式 */
+    fis[8] = (uint8)(sector >> 24);
+    fis[9] = (uint8)(sector >> 32);
+    fis[10] = (uint8)(sector >> 40);
+    fis[11] = 0;
+    fis[12] = (uint8)(BSIZE / 512);         /* 扇区数 */
+    fis[13] = 0;
+    fis[14] = 0;
+    fis[15] = 0;
+
+    if (sata_io(fis, sizeof(fis), sata_dma, BSIZE, write) != 0)
     {
         release(&sata_lock);
         panic("sata: rw failed");
