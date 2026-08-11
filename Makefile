@@ -296,6 +296,7 @@ export RISCV_CFLAGS += -DRISCV=1 #宏
 export SDMMC_DRIVER ?= 0
 ifeq ($(SDMMC_DRIVER),1)
 export RISCV_CFLAGS += -DSDMMC_DRIVER=1
+export RISCV_CFLAGS += -DBOARD_JH7110=1
 endif
 
 RISCV_LD_SCRIPT =hal/riscv/ld.script

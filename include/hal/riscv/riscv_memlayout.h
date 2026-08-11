@@ -34,6 +34,10 @@
 // microSD 卡槽 = SDIO1 @ 0x16020000，eMMC = SDIO0 @ 0x16010000
 #define SDMMC0 0x16020000UL
 
+// StarFive JH7110 系统时钟/复位控制寄存器（SYS_CRG）
+// 时钟寄存器偏移 = 时钟 ID * 4；复位 assert @ 0x2F8, status @ 0x308
+#define JH7110_SYS_CRG 0x13020000UL
+
 // core local interruptor (CLINT), which contains the timer.
 #define CLINT 0x2000000L
 #define CLINT_MTIMECMP(hartid) (CLINT + 0x4000 + 8*(hartid))

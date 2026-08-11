@@ -44,6 +44,9 @@ void vmem_init()
     /*VisionFive 2 JH7110 SD/MMC 控制器映射（板载版）*/
 #if defined SDMMC_DRIVER
     mappages(kernel_pagetable, SDMMC0, SDMMC0, PGSIZE, PTE_R | PTE_W);
+    /*JH7110 SYS_CRG：SDIO 时钟/复位控制*/
+    mappages(kernel_pagetable, JH7110_SYS_CRG, JH7110_SYS_CRG, PGSIZE,
+             PTE_R | PTE_W);
 #endif
 
     /*kernel代码区映射 映射为可读可执行*/
