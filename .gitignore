@@ -67,3 +67,4 @@
 /include/kernel/la_init_code.h
 /include/kernel/rv_init_code.h
 /sdcards-final.tar.xz
+la-flash/
