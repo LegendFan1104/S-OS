@@ -66,7 +66,9 @@ void proc_init(void)
         initlock(&p->vma_lock, "vma");
         p->state = UNUSED;
         p->exit_state = 0;
-        p->kstack = KSTACK((int)(p - pool));
+        /* 内核栈在 allocproc 里分配（buddy 初始化之后）；这里只清零，
+         * 不能提前 pmem_alloc_pages（proc_init 先于 pmem_init 执行）。 */
+        p->kstack = 0;
         // p->trapframe = (struct trapframe *)trapframe[p - pool];
         p->trapframe = 0;
         p->parent = 0;
@@ -186,7 +188,17 @@ found:
     p->pagetable = proc_pagetable(p);
     memset(p->sig_set.__val, 0, sizeof(p->sig_set));
     memset(p->sig_pending.__val, 0, sizeof(p->sig_pending));
-    // memset((void *)p->kstack, 0, PAGE_SIZE);
+    /* 主线程内核栈直接用 buddy 分配的 DMW 地址（与 clone_thread 的
+     * 线程栈一致）。真板 2K1000 上 KSTACK() 高端分页 VA 的页表映射
+     * 经 TLB 重填后不可用（QEMU 不严格检查 MMU 所以正常）。 */
+    if (p->kstack == 0)
+    {
+        void *kstack_pa = pmem_alloc_pages(KSTACKSIZE / PGSIZE);
+        if (NULL == kstack_pa)
+            panic("allocproc: alloc kstack failed");
+        memset(kstack_pa, 0, KSTACKSIZE);
+        p->kstack = (uint64)kstack_pa;
+    }
     p->context.ra = (uint64)forkret;
     p->context.sp = p->kstack + KSTACKSIZE;
     p->main_thread = alloc_thread();
@@ -273,6 +285,13 @@ static void freeproc(proc_t *p)
         list_remove(e);
         list_push_front(&free_thread, e);
         e = tmp;
+    }
+
+    /* 释放主线程内核栈（allocproc 从 buddy 分配的 DMW 栈） */
+    if (p->kstack)
+    {
+        pmem_free_pages((void *)p->kstack, KSTACKSIZE / PGSIZE);
+        p->kstack = 0;
     }
 
     if (p->pagetable)
@@ -383,6 +402,7 @@ void debug_print_all_kstack_extpage()
  */
 void proc_mapstacks(pgtbl_t pagetable)
 {
+#if defined RISCV
     int ret;
     uint64 va, pa;
 
@@ -413,6 +433,7 @@ void proc_mapstacks(pgtbl_t pagetable)
     }
     if (debug_buddy)
         debug_print_all_kstack_extpage();
+#endif
 }
 
 extern char trampoline;
@@ -458,13 +479,41 @@ void scheduler(void)
 {
     struct proc *p;
     cpu_t *cpu = mycpu();
+    static int diag_sched_pass = 0;
+#if !defined RISCV
+    static int diag_eentry_checked = 0;
+#endif
     cpu->proc = NULL;
+    if (FINAL_DEV_DIAG)
+        printf("[diag][sched] enter cpu=%p\n", cpu);
     for (;;)
     {
+#if !defined RISCV
+        if (FINAL_DEV_DIAG && diag_eentry_checked == 0)
+        {
+            diag_eentry_checked = 1;
+            uint64 tcfg;
+            extern void kernelvec();
+            __asm__ volatile("csrrd %0, 0x41" : "=r"(tcfg));
+            printf("[diag][sched] pre-intr crmd=%x estat=%x ecfg=%x "
+                   "eentry=%p kernelvec=%p tcfg=%llx\n",
+                   r_csr_crmd(), r_csr_estat(), r_csr_ecfg(),
+                   (void *)r_csr_eentry(), (void *)kernelvec,
+                   (unsigned long long)tcfg);
+            /* 决定性实验：当场重写 EENTRY 并立刻读回 */
+            w_csr_eentry((uint64)kernelvec);
+            printf("[diag][sched] rewrite eentry=%p\n",
+                   (void *)r_csr_eentry());
+        }
+#endif
         intr_on();
+        if (FINAL_DEV_DIAG && diag_sched_pass < 2)
+            printf("[diag][sched] pass %d loop\n", diag_sched_pass);
         for (p = pool; p < &pool[NPROC]; p++)
         {
             acquire(&p->lock);
+            if (FINAL_DEV_DIAG && diag_sched_pass < 2 && p->pid > 0)
+                printf("[diag][sched] pid=%d state=%d\n", p->pid, p->state);
             if (p->state == RUNNABLE)
             {
                 thread_t *t = NULL;
@@ -483,9 +532,15 @@ void scheduler(void)
 
                 if (t == NULL)
                 {
+                    if (FINAL_DEV_DIAG && diag_sched_pass < 2 && p->pid > 0)
+                        printf("[diag][sched] pid=%d no runnable thread\n",
+                               p->pid);
                     release(&p->lock);
                     continue;
                 }
+                if (FINAL_DEV_DIAG && diag_sched_pass < 2 && p->pid > 0)
+                    printf("[diag][sched] pid=%d thread tid=%d state=%d\n",
+                           p->pid, t->tid, t->state);
 /*
  * LAB1: you may need to init proc start time here
  */
@@ -510,6 +565,15 @@ void scheduler(void)
                 p->state = RUNNING;
                 futex_clear(p->main_thread);
                 cpu->proc = p;
+                {
+                    static int diag_sched_count = 0;
+                    if (FINAL_DEV_DIAG && diag_sched_count < 8)
+                    {
+                        diag_sched_count++;
+                        printf("[diag][sched-switch] pid=%d tid=%d ra=%p sp=%p\n",
+                               p->pid, t->tid, p->context.ra, p->context.sp);
+                    }
+                }
 #ifdef RISCV
                 DEBUG_LOG_LEVEL(LOG_DEBUG, "epc=%p, ra=%p, sp=%p\n", p->trapframe->epc, p->context.ra, p->context.sp);
 #else
@@ -546,6 +610,7 @@ void scheduler(void)
             }
             release(&p->lock);
         }
+        diag_sched_pass++;
 #if DEBUG
         printf("scheduler没有线程可运行\n");
 #endif

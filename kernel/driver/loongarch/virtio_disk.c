@@ -143,7 +143,9 @@ walk_device(pagetable_t pagetable, uint64 va, int alloc)
             }
 
             memset(pagetable, 0, PGSIZE);
-            *pte = PA2PTE(pagetable) | PTE_V | DMWIN1_MASK;
+            /* 中间页表项存未带 0x9000 前缀的物理地址（与 vmem.c walk 同
+             * 理），硬件遍历才能解引用；软件侧 PTE2PA|DMWIN 再转回。 */
+            *pte = PA2PTE(pagetable) | PTE_V;
         }
     }
     return &pagetable[PX(0, va)];

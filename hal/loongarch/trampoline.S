@@ -14,6 +14,19 @@
 
 #include "la_asm.h"
 
+/* 调试：往 0x800000001fe20000 的 UART 打一个字符（只用于定位卡点） */
+.macro uart_putc ch
+	/* 0x800000001fe20000: UART0 through DMW1. */
+	lu12i.w	$t2, 0x1fe20
+	lu32i.d	$t2, 0
+	lu52i.d	$t2, $t2, -2048
+999:	ld.bu	$t3, $t2, 5
+	andi	$t3, $t3, 0x20
+	beqz	$t3, 999b
+	ori	$t3, $zero, \ch
+	st.b	$t3, $t2, 0
+.endm
+
 .section .text.u_eentry
 .globl trampoline
 trampoline:
