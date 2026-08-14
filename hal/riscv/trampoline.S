@@ -96,6 +96,16 @@ userret:
         csrw satp, a1
         sfence.vma zero, zero
 
+        # The C path prepares sstatus before entering this routine.  Keep the
+        # privilege transition local to the return stub as well: a stale SPP
+        # would make sret return to S-mode, where a U=1 user text page is
+        # intentionally inaccessible and is reported as an instruction fault.
+        li t0, -256                # ~(1 << 8), SSTATUS_SPP
+        csrr t1, sstatus
+        and t1, t1, t0
+        ori t1, t1, 32              # SSTATUS_SPIE
+        csrw sstatus, t1
+
         # put the saved user a0 in sscratch, so we
         # can swap it with our a0 (TRAPFRAME) in the last step.
         ld t0, 112(a0)
