@@ -214,6 +214,7 @@ found:
     p->main_thread->sz = p->sz;
     p->main_thread->clear_child_tid = p->clear_child_tid;
     p->main_thread->kstack = p->kstack;
+    p->main_thread->trapframe->kernel_sp = p->kstack + KSTACKSIZE;
     list_init(&p->thread_queue);
     list_push_front(&p->thread_queue, &p->main_thread->elem);
     memset(p->sharememory,0,sizeof(p->sharememory));
@@ -809,11 +810,24 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
     t->kstack_pa = (uint64)kstack_pa;
     t->kstack = (uint64)kstack_pa;
 
-    /* 3. 按 Linux clone 语义准备子线程寄存器 */
+    /* The libc clone wrapper leaves the thread entry record at the supplied
+     * stack address.  A thread must start at that function, rather than
+     * re-entering the parent's clone syscall return address. */
+    args_t start;
+    if (copyin(p->pagetable, (char *)&start, stack_va, sizeof(start)) < 0)
+        panic("thread_clone: copyin start args failed");
+
+    /* 3. 准备子线程寄存器 */
     copytrapframe(t->trapframe, p->trapframe);
-    t->trapframe->a0 = 0;        ///< 子线程从 clone 返回时返回值为 0
+    t->trapframe->a0 = start.arg;
     t->trapframe->sp = stack_va; ///< 使用用户传入的新栈顶
     t->trapframe->kernel_sp = t->kstack + KSTACKSIZE;
+
+#ifdef RISCV
+    t->trapframe->epc = start.start_func;
+#else
+    t->trapframe->era = start.start_func;
+#endif
 
     /* 处理CLONE_SETTLS */
     if (flags & CLONE_SETTLS)
@@ -908,6 +922,9 @@ uint64 fork(void)
     // 复制trapframe, np的返回值设为0, 堆栈指针设为目标堆栈
     *(np->trapframe) = *(p->trapframe); ///< 复制陷阱帧（Trapframe）并修改返回值
     np->trapframe->a0 = 0;
+    /* The child owns a different kernel stack.  Do not inherit the parent's
+     * trap-entry stack pointer through fork's trapframe copy. */
+    np->trapframe->kernel_sp = np->kstack + KSTACKSIZE;
     copytrapframe(np->main_thread->trapframe, np->trapframe);
     // @todo 未复制栈    if(stack != 0) np->tf->sp = stack;
 
@@ -985,7 +1002,18 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     *(np->trapframe) = *(p->trapframe); ///< 复制陷阱帧（Trapframe）并修改返回值
     np->trapframe->a0 = 0;
     if (stack != 0)
+    {
+        args_t start;
+        if (copyin(p->pagetable, (char *)&start, stack, sizeof(start)) < 0)
+            panic("clone: copyin start args failed");
+#ifdef RISCV
+        np->trapframe->epc = start.start_func;
+#else
+        np->trapframe->era = start.start_func;
+#endif
         np->trapframe->sp = stack;
+        np->trapframe->a0 = start.arg;
+    }
     if (flags & CLONE_SETTLS)
         np->trapframe->tp = tls;
 
@@ -1008,6 +1036,8 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     np->oom_score_adj = p->oom_score_adj;
     pid = np->pid;
     copytrapframe(np->main_thread->trapframe, np->trapframe);
+    np->trapframe->kernel_sp = np->kstack + KSTACKSIZE;
+    np->main_thread->trapframe->kernel_sp = np->trapframe->kernel_sp;
     np->state = RUNNABLE;
     np->main_thread->state = t_RUNNABLE;
     if (ptid != 0)
