@@ -1193,10 +1193,10 @@ void kerneltrap(void)
             {
                 printf("fault-pte: unmapped for sepc=%p\n", r_sepc());
             }
-            p->term_signal = SIGSEGV;
-            p->killed = SIGSEGV;
-            exit(SIGSEGV);
-            panic("kerneltrap exit return");
+            /* kerneltrap is entered with SPP=1.  A low sepc here therefore
+             * means the sret/trap-return path failed; it is not a user trap
+             * and must not terminate init as if SIGSEGV came from usertrap. */
+            panic("kerneltrap: supervisor instruction fault");
         }
 
         printf("scause %p\n", scause);

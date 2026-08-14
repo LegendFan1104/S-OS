@@ -22,6 +22,7 @@ export CFLAGS += -Iinclude $(INCLUDE_FALGES)
 export CFLAGS += -MD #生成make的依赖文件到.d文件
 export CFLAGS += -DNUMCPU=16 #宏
 export CFLAGS += -march=loongarch64 -mabi=lp64d
+export CFLAGS += -mstrict-align
 export CFLAGS += -ffreestanding -fno-common -nostdlib -fno-stack-protector 
 export CFLAGS += -fno-pie -no-pie 
 export CFLAGS += -DDEBUG=0
@@ -290,6 +291,7 @@ export RISCV_CFLAGS += -MD
 export RISCV_CFLAGS += -DNUMCPU=16 #宏
 export RISCV_CFLAGS += -DOPEN_COLOR_PRINT=1 #log宏，现在没有
 export RISCV_CFLAGS += -march=rv64gc -mabi=lp64d
+export RISCV_CFLAGS += -mstrict-align
 export RISCV_CFLAGS += -ffreestanding -fno-common -nostdlib -fno-stack-protector 
 export RISCV_CFLAGS += -fno-pie -no-pie 
 export RISCV_CFLAGS += -mcmodel=medany

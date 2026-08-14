@@ -66,9 +66,14 @@ void proc_init(void)
         initlock(&p->vma_lock, "vma");
         p->state = UNUSED;
         p->exit_state = 0;
-        /* 内核栈在 allocproc 里分配（buddy 初始化之后）；这里只清零，
-         * 不能提前 pmem_alloc_pages（proc_init 先于 pmem_init 执行）。 */
+#if defined RISCV
+        /* RISC-V kernel stacks are high virtual addresses mapped by
+         * proc_mapstacks().  The DMW stack path is LoongArch-only. */
+        p->kstack = KSTACK((int)(p - pool));
+#else
+        /* LoongArch allocates a DMW kernel stack after pmem_init(). */
         p->kstack = 0;
+#endif
         // p->trapframe = (struct trapframe *)trapframe[p - pool];
         p->trapframe = 0;
         p->parent = 0;
@@ -188,9 +193,9 @@ found:
     p->pagetable = proc_pagetable(p);
     memset(p->sig_set.__val, 0, sizeof(p->sig_set));
     memset(p->sig_pending.__val, 0, sizeof(p->sig_pending));
-    /* 主线程内核栈直接用 buddy 分配的 DMW 地址（与 clone_thread 的
-     * 线程栈一致）。真板 2K1000 上 KSTACK() 高端分页 VA 的页表映射
-     * 经 TLB 重填后不可用（QEMU 不严格检查 MMU 所以正常）。 */
+#if !defined RISCV
+    /* LoongArch uses a buddy-allocated DMW stack because high virtual KSTACK
+     * mappings are unreliable on the 2K1000 TLB refill path. */
     if (p->kstack == 0)
     {
         void *kstack_pa = pmem_alloc_pages(KSTACKSIZE / PGSIZE);
@@ -199,6 +204,7 @@ found:
         memset(kstack_pa, 0, KSTACKSIZE);
         p->kstack = (uint64)kstack_pa;
     }
+#endif
     p->context.ra = (uint64)forkret;
     p->context.sp = p->kstack + KSTACKSIZE;
     p->main_thread = alloc_thread();
@@ -208,6 +214,7 @@ found:
     p->main_thread->sz = p->sz;
     p->main_thread->clear_child_tid = p->clear_child_tid;
     p->main_thread->kstack = p->kstack;
+    p->main_thread->trapframe->kernel_sp = p->kstack + KSTACKSIZE;
     list_init(&p->thread_queue);
     list_push_front(&p->thread_queue, &p->main_thread->elem);
     memset(p->sharememory,0,sizeof(p->sharememory));
@@ -287,12 +294,14 @@ static void freeproc(proc_t *p)
         e = tmp;
     }
 
-    /* 释放主线程内核栈（allocproc 从 buddy 分配的 DMW 栈） */
+#if !defined RISCV
+    /* Release the LoongArch DMW stack allocated in allocproc(). */
     if (p->kstack)
     {
         pmem_free_pages((void *)p->kstack, KSTACKSIZE / PGSIZE);
         p->kstack = 0;
     }
+#endif
 
     if (p->pagetable)
     {
@@ -801,11 +810,24 @@ clone_thread(uint64 stack_va, uint64 ptid, uint64 tls, uint64 ctid, uint64 flags
     t->kstack_pa = (uint64)kstack_pa;
     t->kstack = (uint64)kstack_pa;
 
-    /* 3. 按 Linux clone 语义准备子线程寄存器 */
+    /* The libc clone wrapper leaves the thread entry record at the supplied
+     * stack address.  A thread must start at that function, rather than
+     * re-entering the parent's clone syscall return address. */
+    args_t start;
+    if (copyin(p->pagetable, (char *)&start, stack_va, sizeof(start)) < 0)
+        panic("thread_clone: copyin start args failed");
+
+    /* 3. 准备子线程寄存器 */
     copytrapframe(t->trapframe, p->trapframe);
-    t->trapframe->a0 = 0;        ///< 子线程从 clone 返回时返回值为 0
+    t->trapframe->a0 = start.arg;
     t->trapframe->sp = stack_va; ///< 使用用户传入的新栈顶
     t->trapframe->kernel_sp = t->kstack + KSTACKSIZE;
+
+#ifdef RISCV
+    t->trapframe->epc = start.start_func;
+#else
+    t->trapframe->era = start.start_func;
+#endif
 
     /* 处理CLONE_SETTLS */
     if (flags & CLONE_SETTLS)
@@ -900,6 +922,9 @@ uint64 fork(void)
     // 复制trapframe, np的返回值设为0, 堆栈指针设为目标堆栈
     *(np->trapframe) = *(p->trapframe); ///< 复制陷阱帧（Trapframe）并修改返回值
     np->trapframe->a0 = 0;
+    /* The child owns a different kernel stack.  Do not inherit the parent's
+     * trap-entry stack pointer through fork's trapframe copy. */
+    np->trapframe->kernel_sp = np->kstack + KSTACKSIZE;
     copytrapframe(np->main_thread->trapframe, np->trapframe);
     // @todo 未复制栈    if(stack != 0) np->tf->sp = stack;
 
@@ -977,7 +1002,18 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     *(np->trapframe) = *(p->trapframe); ///< 复制陷阱帧（Trapframe）并修改返回值
     np->trapframe->a0 = 0;
     if (stack != 0)
+    {
+        args_t start;
+        if (copyin(p->pagetable, (char *)&start, stack, sizeof(start)) < 0)
+            panic("clone: copyin start args failed");
+#ifdef RISCV
+        np->trapframe->epc = start.start_func;
+#else
+        np->trapframe->era = start.start_func;
+#endif
         np->trapframe->sp = stack;
+        np->trapframe->a0 = start.arg;
+    }
     if (flags & CLONE_SETTLS)
         np->trapframe->tp = tls;
 
@@ -1000,6 +1036,8 @@ int clone(uint64 flags, uint64 stack, uint64 ptid, uint64 tls, uint64 ctid)
     np->oom_score_adj = p->oom_score_adj;
     pid = np->pid;
     copytrapframe(np->main_thread->trapframe, np->trapframe);
+    np->trapframe->kernel_sp = np->kstack + KSTACKSIZE;
+    np->main_thread->trapframe->kernel_sp = np->trapframe->kernel_sp;
     np->state = RUNNABLE;
     np->main_thread->state = t_RUNNABLE;
     if (ptid != 0)
