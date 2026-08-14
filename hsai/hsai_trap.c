@@ -25,11 +25,21 @@
 
 /* 两个架构的trampoline函数名称一致 */
 extern char uservec[];    ///< trampoline 用户态异常，陷入。hsai_set_usertrap使用
+#if defined(BOARD_LS2K)
+/* 2K1000 cannot reliably fetch the trampoline through its high virtual
+ * mapping.  The linker symbol is the DMW alias used by the board path. */
+extern void userret(uint64 trapframe_addr, uint64 pgdl);
+#else
 extern char userret[];    ///< trampoline 进入用户态。hsai_usertrapret使用
+#endif
 extern void kernelvec();  ///< 外部中断/异常入口
 extern char trampoline[]; ///< trampoline 代码段的起始地址
 extern void handle_tlbr();
 extern void handle_merr();
+
+#if !defined RISCV
+static void diag_walk_chain(pgtbl_t pt, uint64 va);
+#endif
 
 int devintr(void); ///< 中断判断函数
 
@@ -64,8 +74,21 @@ void hsai_trap_init(void)
     uint32 ecfg = (0U << CSR_ECFG_VS_SHIFT) | HWI_VEC | TI_VEC; ///< 例外配置
     w_csr_ecfg(ecfg);                                           ///< 设置例外配置
     w_csr_eentry((uint64)kernelvec);                            ///< 设置内核trap入口
-    w_csr_tlbrentry((uint64)handle_tlbr);                       ///< TLB重填exception
-    w_csr_merrentry((uint64)handle_merr);                       ///< 机器exception
+    /* These exception-vector CSRs receive physical addresses.  The 2K1000
+     * does not decode a 0x9000 DMW tag here, unlike the permissive QEMU. */
+    w_csr_tlbrentry((uint64)handle_tlbr & ~dmwin_mask);
+    w_csr_merrentry((uint64)handle_merr & ~dmwin_mask);
+    {
+        uint64 rt, rt2;
+        __asm__ volatile("csrrd %0, 0x88" : "=r"(rt));
+        __asm__ volatile("csrrd %0, 0x93" : "=r"(rt2));
+        if (FINAL_DEV_DIAG)
+            printf("[diag][trap-init] kernelvec=%p eentry=%p "
+                   "tlbr=%p tlbr_csr=%p merr=%p merr_csr=%p\n",
+                   (void *)kernelvec, (void *)r_csr_eentry(),
+                   (void *)handle_tlbr, (void *)rt,
+                   (void *)handle_merr, (void *)rt2);
+    }
     timer_init();                                               ///< 启动时钟中断
 
     /* LoongArch glibc (the gcc-13.2 sysroot copy shipped in /glibc/lib)
@@ -504,13 +527,65 @@ void hsai_usertrapret()
     //intr_off();
     // 设置ertn的返回地址
     hsai_set_csr_sepc(trapframe->era);
+#if !defined(BOARD_LS2K)
     uint64 fn = TRAMPOLINE + (userret - trampoline);
+#endif
 #if DEBUG
     // printf("epc: 0x%p  ", trapframe->era);
     // printf("即将跳转: %p\n", fn);
 #endif
-    volatile uint64 pgdl = (uint64)(myproc()->pagetable);
+    /* 硬件 TLB 重填从 PGDL 取页表根：必须是未带 0x9000 DMW 标记的
+     * 物理地址（真板内存控制器不解码 0x9000 前缀，QEMU 不检查）。 */
+    volatile uint64 pgdl =
+        (uint64)(myproc()->pagetable) & ~dmwin_mask;
+    {
+        static int diag_la_userret_once = 0;
+        if (FINAL_DEV_DIAG && diag_la_userret_once == 0)
+        {
+            diag_la_userret_once = 1;
+#if defined(BOARD_LS2K)
+            printf("[diag][usertrapret] pid=%d era=%p sp=%p pgdl=%p "
+                   "direct_fn=%p trapframe=%p\n",
+                   myproc()->pid, trapframe->era, trapframe->sp,
+                   (void *)pgdl, (void *)(uint64)userret,
+                   (void *)trapframe);
+#else
+            printf("[diag][usertrapret] pid=%d era=%p sp=%p pgdl=%p fn=%p\n",
+                   myproc()->pid, trapframe->era, trapframe->sp,
+                   (void *)pgdl, (void *)fn);
+#endif
+        }
+    }
+    /* 实验：进用户态前 dump 用户页表关键 VA 的叶子 PTE，
+     * 确认映射与 PFN/标志位是否就绪（真板硬件遍历依赖这些）。 */
+    {
+        static int diag_la_pte_once = 0;
+        if (FINAL_DEV_DIAG && diag_la_pte_once == 0)
+        {
+            diag_la_pte_once = 1;
+            uint64 stack_top_page = USER_STACK_TOP - PGSIZE;
+            uint64 vas[7] = { 0, 0x1000, stack_top_page - PGSIZE, stack_top_page,
+                              0xffffff000, 0x3fffffffe000, 0x3ffffffff000 };
+            int i;
+            for (i = 0; i < 7; i++)
+            {
+                pte_t *pte = walk(p->pagetable, vas[i], 0);
+                printf("[diag][pte] va=0x%llx pte=0x%llx\n",
+                       (unsigned long long)vas[i],
+                       pte ? (unsigned long long)*pte : 0ULL);
+            }
+            diag_walk_chain(p->pagetable, stack_top_page); /* 用户栈顶页 */
+            diag_walk_chain(p->pagetable, 0);            /* 参考：代码页 */
+        }
+    }
+#if defined(BOARD_LS2K)
+    /* Keep trampoline and trapframe on the DMW alias until ertn.  This is
+     * the proven 2K1000 board path; only the final user instruction fetch
+     * needs the user page table. */
+    userret((uint64)trapframe, pgdl);
+#else
     ((void (*)(uint64, uint64))fn)(TRAPFRAME, pgdl); // 可以传参
+#endif
 #endif
 }
 
@@ -518,6 +593,15 @@ extern void list_file(const char *path);
 void forkret(void)
 {
     static int first = 1;
+#if !defined RISCV
+    static int diag_la_forkret_once = 0;
+    if (FINAL_DEV_DIAG && diag_la_forkret_once == 0)
+    {
+        diag_la_forkret_once = 1;
+        printf("[diag][forkret-enter] pid=%d first=%d\n",
+               myproc()->pid, first);
+    }
+#endif
 #if defined RISCV
     static int diag_forkret_once = 0;
     if (FINAL_DEV_DIAG && diag_forkret_once == 0)
@@ -534,7 +618,11 @@ void forkret(void)
         // regular process (e.g., because it calls sleep), and thus cannot
         // be run from main().
         first = 0;
+        if (FINAL_DEV_DIAG)
+            printf("[diag][forkret] calling fs_mount\n");
         fs_mount(ROOTDEV, EXT4, "/", 0, NULL); // 挂载文件系统
+        if (FINAL_DEV_DIAG)
+            printf("[diag][forkret] fs_mount done\n");
         dir_init();
         futex_init();
 
@@ -579,6 +667,59 @@ void forkret(void)
  * @brief 用户态中断和异常处理函数
  *
  */
+#if !defined RISCV
+/* TLB 重填失败诊断：由 tlbrefill.S 在遍历失败时跳到此处（已切到
+ * .bss 里的安全栈），打印 PGD/BADV/ERA/失败级数后死循环。 */
+extern uint64 tlbr_diag_stage, tlbr_diag_pgd, tlbr_diag_badv;
+extern uint64 tlbr_diag_era, tlbr_diag_val;
+void tlbr_diag(void)
+{
+    printf("[tlbr-DIAG] stage=%llu pgd=0x%llx badv=0x%llx era=0x%llx "
+           "val=0x%llx\n",
+           (unsigned long long)tlbr_diag_stage,
+           (unsigned long long)tlbr_diag_pgd,
+           (unsigned long long)tlbr_diag_badv,
+           (unsigned long long)tlbr_diag_era,
+           (unsigned long long)tlbr_diag_val);
+    for (;;)
+        ;
+}
+#endif
+
+/* 调试：打印某个 VA 的完整页表遍历链（l3/l2/l1/leaf），定位断在哪一级 */
+#if !defined RISCV
+static void diag_walk_chain(pgtbl_t pt, uint64 va)
+{
+    pte_t *pte = &pt[PX(3, va)];
+    printf("[diag][chain] va=0x%llx l3=0x%llx", (unsigned long long)va,
+           (unsigned long long)*pte);
+    if (!(*pte & PTE_V))
+    {
+        printf("\n");
+        return;
+    }
+    pt = (pgtbl_t)((PTE2PA(*pte)) | dmwin_win0);
+    pte = &pt[PX(2, va)];
+    printf(" l2=0x%llx", (unsigned long long)*pte);
+    if (!(*pte & PTE_V))
+    {
+        printf("\n");
+        return;
+    }
+    pt = (pgtbl_t)((PTE2PA(*pte)) | dmwin_win0);
+    pte = &pt[PX(1, va)];
+    printf(" l1=0x%llx", (unsigned long long)*pte);
+    if (!(*pte & PTE_V))
+    {
+        printf("\n");
+        return;
+    }
+    pt = (pgtbl_t)((PTE2PA(*pte)) | dmwin_win0);
+    pte = &pt[PX(0, va)];
+    printf(" leaf=0x%llx\n", (unsigned long long)*pte);
+}
+#endif
+
 // 其实xv6-loongarch从uservec进入usertrap时，a0也是trapframe.只不过xv6-loongarch声明为usertrap(void)。我们是可以用a0当trapframe的
 void usertrap(void)
 {
@@ -744,6 +885,16 @@ void usertrap(void)
     //     printf("usertrap(): badv=0x%x\n\n", info);
     // #endif
     trapframe->era = r_csr_era(); ///< 记录trap发生地址
+    {
+        static int diag_la_usertrap_count = 0;
+        if (FINAL_DEV_DIAG && diag_la_usertrap_count < 8)
+        {
+            diag_la_usertrap_count++;
+            printf("[diag][usertrap] pid=%d estat=%p era=%p badv=%p\n",
+                   p ? p->pid : -1, (void *)r_csr_estat(),
+                   (void *)r_csr_era(), (void *)r_csr_badv());
+        }
+    }
     if ((r_csr_prmd() & PRMD_PPLV) == 0)
     {
         printf("#### OS COMP TEST GROUP END libcbench-musl ####\n");
@@ -865,9 +1016,15 @@ void usertrap(void)
         }
         
         uint64 badv = r_csr_badv();
-        if (badv < MAXVA)
+        /* PPI/INE report BADV as zero on 2K1000.  ERA is then the only
+         * address that identifies the rejected user leaf. */
+        uint64 fault_va = badv ? badv : trapframe->era;
+        if (fault_va < MAXVA)
         {
-            pte_t *pte = walk(p->pagetable, badv, 0);
+            pte_t *pte = walk(p->pagetable, fault_va, 0);
+            printf("[diag][fault-pte] va=%p pte=%p\n", fault_va,
+                   pte ? (void *)*pte : NULL);
+            diag_walk_chain(p->pagetable, fault_va);
             if (pte)
                 printf("pte=%p (valid=%d, *pte=0x%p)\n", pte, *pte & PTE_V, *pte);
             else
@@ -875,7 +1032,7 @@ void usertrap(void)
         }
         else
         {
-            printf("badv %p exceeds MAXVA %p\n", badv, MAXVA);
+            printf("fault_va %p exceeds MAXVA %p\n", fault_va, MAXVA);
         }
         printf("p->pid=%d, p->sz=0x%p\n", p->pid, p->sz);
         uint64 estat = r_csr_estat();
@@ -961,6 +1118,14 @@ int devintr(void)
     }
     else if (estat & ecfg & TI_VEC) ///< 定时器中断
     {
+        {
+            static int diag_timer_count = 0;
+            if (FINAL_DEV_DIAG && diag_timer_count < 8)
+            {
+                diag_timer_count++;
+                printf("[diag][timer-irq] estat=%x\n", estat);
+            }
+        }
         timer_tick();
 
         /* 标明已经处理中断信号 */
@@ -1089,6 +1254,16 @@ void kerneltrap(void)
     uint64 era = r_csr_era();
     // PRMD寄存器：记录异常发生时的特权级别、中断使能、写使能。
     uint64 prmd = r_csr_prmd();
+
+    {
+        static int diag_kt_count = 0;
+        if (FINAL_DEV_DIAG && diag_kt_count < 8)
+        {
+            diag_kt_count++;
+            printf("[diag][kerneltrap] era=%p prmd=%p estat=%p\n",
+                   (void *)era, (void *)prmd, (void *)r_csr_estat());
+        }
+    }
 
     assert((prmd & PRMD_PPLV) == 0,
            "kerneltrap: not from privilege0");

@@ -22,6 +22,15 @@ extern char KERNEL_TEXT;
 extern char KERNEL_DATA;
 extern char USER_END;
 extern char trampoline;
+
+/* QEMU accepts incomplete LoongArch user leaves, but 2K1000 requires the
+ * physical-page and memory-attribute bits as well as V/PLV/D. */
+#if defined RISCV
+#define USER_LEAF_PTE_BASE (PTE_U | PTE_D)
+#else
+#define USER_LEAF_PTE_BASE (PTE_U | PTE_D | PTE_P | PTE_MAT)
+#endif
+
 void vmem_init()
 {
     kernel_pagetable = pmem_alloc_pages(1); ///< 分配一个页,存放内核页表 分配时已清空页面
@@ -126,7 +135,10 @@ pte_t *walk(pgtbl_t pt, uint64 va, int alloc)
                 return NULL;
             /*写页表的时候，需要把分配的页的物理地址写入pte中*/
             // pt = to_phy(pt);
-            *pte = PA2PTE(pt) | PTE_WALK | dmwin_win0;
+            /* 中间页表项必须存不带 0x9000 前缀的物理地址：真板硬件
+             * TLB 重填（handle_tlbr 的 lddir）把 PTE 的 PFN 当物理地址
+             * 访问，0x9000 DMW 标记不被内存控制器解码（QEMU 不检查）。 */
+            *pte = PA2PTE(pt) | PTE_WALK;
             if (debug_trace_walk)
                 printf("0x%p->", pte);
 
@@ -195,7 +207,7 @@ void freewalk(pgtbl_t pt)
     for (int i = 0; i < 512; i++)
     {
         pte_t pte = pt[i];
-        if ((pte & PTE_V) && PTE_FLAGS(pte) == PTE_V) ///< 有效且指向下级页表的PTE
+        if ((pte & PTE_V) && PTE_FLAGS(pte) == PTE_WALK) ///< 有效且指向下级页表的PTE
         {
             uint64 child = (PTE2PA(pte) | dmwin_win0);
             freewalk((pgtbl_t)child);
@@ -286,7 +298,7 @@ void vmunmap(pgtbl_t pt, uint64 va, uint64 npages, int do_free)
         if ((*pte & PTE_V) == 0) ///< 确保pte有效
             continue;
 
-        if ((PTE_FLAGS(*pte) == PTE_V)) ///< 若 PTE 只有 PTE_V 标志（无其他权限位），说明是中间页表节点
+        if ((PTE_FLAGS(*pte) == PTE_WALK)) ///< 中间页表节点使用 PTE_WALK 权限
             panic("vmunmap: not a leaf");
 
         if (do_free)
@@ -358,6 +370,32 @@ void uvminit(proc_t *p, uchar *src, uint sz)
     // mappages(pt, i, (uint64)mem, PGSIZE, PTE_USER);
 
     alloc_vma_stack(p);
+    /* 调试：栈映射刚创建完立即检查（和 usertrapret 里的 chain 对比，
+     * 判断是"没写进去"还是"后来被抹掉"） */
+    if (FINAL_DEV_DIAG)
+    {
+        uint64 top_page = USER_STACK_TOP - PGSIZE;
+        pte_t *t = &pt[PX(3, top_page)];
+        uint64 l2 = 0, l1 = 0, leaf = 0;
+        if (*t & PTE_V)
+        {
+            pgtbl_t p2 = (pgtbl_t)((PTE2PA(*t)) | dmwin_win0);
+            l2 = p2[PX(2, top_page)];
+            if (l2 & PTE_V)
+            {
+                pgtbl_t p1 = (pgtbl_t)((PTE2PA(l2)) | dmwin_win0);
+                l1 = p1[PX(1, top_page)];
+                if (l1 & PTE_V)
+                {
+                    pgtbl_t p0 = (pgtbl_t)((PTE2PA(l1)) | dmwin_win0);
+                    leaf = p0[PX(0, top_page)];
+                }
+            }
+        }
+        printf("[diag][stack-just-mapped] l2=0x%llx l1=0x%llx leaf=0x%llx\n",
+               (unsigned long long)l2, (unsigned long long)l1,
+               (unsigned long long)leaf);
+    }
 }
 
 /**
@@ -627,7 +665,8 @@ uint64 uvmalloc(pgtbl_t pt, uint64 oldsz, uint64 newsz, int perm)
         if (mem)
         {
             memset(mem, 0, npages * PGSIZE);
-            if (mappages(pt, oldsz, (uint64)mem, npages * PGSIZE, perm | PTE_U | PTE_D) == 1)
+            if (mappages(pt, oldsz, (uint64)mem, npages * PGSIZE,
+                         perm | USER_LEAF_PTE_BASE) == 1)
             {
                 return newsz; // 映射成功直接返回
             }
@@ -643,7 +682,8 @@ uint64 uvmalloc(pgtbl_t pt, uint64 oldsz, uint64 newsz, int perm)
             uvmdealloc(pt, a, oldsz);
         }
         memset(mem, 0, PGSIZE);
-        if (mappages(pt, a, (uint64)mem, PGSIZE, perm | PTE_U | PTE_D) != 1)
+        if (mappages(pt, a, (uint64)mem, PGSIZE,
+                     perm | USER_LEAF_PTE_BASE) != 1)
         {
             pmem_free_pages(mem, 1);
             uvmdealloc(pt, a, oldsz);
@@ -662,17 +702,32 @@ uint64 uvmalloc1(pgtbl_t pt, uint64 start, uint64 end, int perm)
     uint64 a;
     assert(start < end, "uvmalloc1:start < end");
     uint64 npages = (PGROUNDUP(end) - start) / PGSIZE;
+    if (FINAL_DEV_DIAG)
+        printf("[diag][uvm1] pt=%p start=0x%llx end=0x%llx npages=%llu\n",
+               pt, (unsigned long long)start, (unsigned long long)end,
+               (unsigned long long)npages);
     // 首先尝试多页分配
     if (npages > 0)
     {
         mem = pmem_alloc_pages(npages);
+        if (FINAL_DEV_DIAG)
+            printf("[diag][uvm1] big-alloc mem=%p\n", mem);
         if (mem)
         {
             memset(mem, 0, npages * PGSIZE);
-            if (mappages(pt, start, (uint64)mem, npages * PGSIZE, perm | PTE_U | PTE_D) == 1)
+            if (mappages(pt, start, (uint64)mem, npages * PGSIZE,
+                         perm | USER_LEAF_PTE_BASE) == 1)
             {
+                if (FINAL_DEV_DIAG)
+                {
+                    pte_t *chk = walk(pt, start, 0);
+                    printf("[diag][uvm1] big-map ok, leaf(start)=0x%llx\n",
+                           chk ? (unsigned long long)*chk : 0ULL);
+                }
                 return 1; // 映射成功直接返回
             }
+            if (FINAL_DEV_DIAG)
+                printf("[diag][uvm1] big mappages failed, fallback\n");
             pmem_free_pages(mem, npages); // 映射失败释放内存
         }
     }
@@ -686,11 +741,18 @@ uint64 uvmalloc1(pgtbl_t pt, uint64 start, uint64 end, int perm)
             return 0;
         }
         memset(mem, 0, PGSIZE);
-        if (mappages(pt, a, (uint64)mem, PGSIZE, perm | PTE_U | PTE_W) != 1)
+        if (mappages(pt, a, (uint64)mem, PGSIZE,
+                     perm | USER_LEAF_PTE_BASE | PTE_W) != 1)
         {
             pmem_free_pages(mem, 1);
             uvmdealloc1(pt, start, a);
             return 0;
+        }
+        if (FINAL_DEV_DIAG && a == start)
+        {
+            pte_t *chk = walk(pt, a, 0);
+            printf("[diag][uvm1] single-map ok, leaf(start)=0x%llx\n",
+                   chk ? (unsigned long long)*chk : 0ULL);
         }
     }
 #if DEBUG
@@ -747,7 +809,8 @@ uint64 uvm_grow(pgtbl_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
         if (mem)
         {
             memset(mem, 0, npages * PGSIZE);
-            if (mappages(pagetable, oldsz, (uint64)mem, npages * PGSIZE, xperm | PTE_U | PTE_D) == 1)
+            if (mappages(pagetable, oldsz, (uint64)mem, npages * PGSIZE,
+                         xperm | USER_LEAF_PTE_BASE) == 1)
             {
                 return newsz; // 映射成功直接返回
             }
@@ -763,7 +826,8 @@ uint64 uvm_grow(pgtbl_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
             return 0;
         }
         memset(mem, 0, PGSIZE);
-        if (mappages(pagetable, cur_page, (uint64)mem, PGSIZE, xperm | PTE_U | PTE_D) != 1)
+        if (mappages(pagetable, cur_page, (uint64)mem, PGSIZE,
+                     xperm | USER_LEAF_PTE_BASE) != 1)
         {
             pmem_free_pages(mem, 1);
             uvmdealloc(pagetable, cur_page, oldsz);

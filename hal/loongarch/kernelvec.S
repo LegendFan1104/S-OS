@@ -2,9 +2,10 @@
         # interrupts and exceptions while in privilege0
         # push all registers, call kerneltrap(), restore, return.
         #
+.section .text.k_eentry
 .globl kerneltrap
 .globl kernelvec
-.align 4
+.align 12
 kernelvec:
         # make room to save registers.
         addi.d $sp, $sp, -256

@@ -709,6 +709,18 @@ uint64 alloc_vma_stack(struct proc *p)
         release(&p->vma_lock);
         return -1;
     }
+    /* 调试：建完栈映射后立刻检查叶子 PTE 是否真的写进去了 */
+    if (FINAL_DEV_DIAG)
+    {
+        uint64 top_page = USER_STACK_TOP - PGSIZE;
+        pte_t *p1 = walk(p->pagetable, top_page, 0);
+        pte_t *p2 = walk(p->pagetable, top_page - PGSIZE, 0);
+        printf("[diag][stack-alloc] start=0x%llx end=0x%llx "
+               "pte(top)=0x%llx pte(top-1)=0x%llx\n",
+               (unsigned long long)start, (unsigned long long)end,
+               p1 ? (unsigned long long)*p1 : 0ULL,
+               p2 ? (unsigned long long)*p2 : 0ULL);
+    }
     vma->type = STACK;
     vma->perm = PTE_R | PTE_W;
     vma->addr = start;
@@ -883,7 +895,7 @@ static int free_vma_list_locked(struct proc *p)
                 continue;
             if ((*pte & PTE_V) == 0)
                 continue;
-            if (PTE_FLAGS(*pte) == PTE_V)
+            if (PTE_FLAGS(*pte) == PTE_WALK)
                 continue;
             uint64 pa = PTE2PA(*pte) | dmwin_win0;
             pmem_free_pages((void *)pa, 1);

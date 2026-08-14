@@ -74,6 +74,13 @@ static void refresh_process_timer(proc_t *p, uint64 now)
 #define JH7110_CLK_FREQ 4000000UL
 #endif
 
+#ifdef BOARD_LS2K
+/* 2K1000LA 真板：主计数器固定 125MHz（《龙芯2K1000LA处理器用户手册》）；
+ * 且板上 MMIO 须走 0x8000 窗口，RTC(0x9000 窗口)读不到秒变化，
+ * 因此不做差分校准，直接使用固定频率。 */
+#define LS2K_CLK_FREQ 125000000UL
+#endif
+
 static uint64
 read_rtc_seconds(void)
 {
@@ -110,7 +117,7 @@ sanitize_boot_time(uint64 rtc_sec)
     return rtc_sec;
 }
 
-#ifndef BOARD_JH7110
+#if !defined BOARD_JH7110 && !defined BOARD_LS2K
 static uint64
 wait_rtc_second_change(uint64 prev, uint64 max_poll)
 {
@@ -138,6 +145,9 @@ calibrate_timer_freq_from_rtc(void)
 #ifdef BOARD_JH7110
     /* 真板没有 RTC 用于差分测频，直接使用 JH7110 的 CLINT time 频率 */
     return JH7110_CLK_FREQ;
+#elif defined BOARD_LS2K
+    /* 2K1000LA 真板：RTC 在 0x9000 窗口不可读，直接使用主计数器固定频率 */
+    return LS2K_CLK_FREQ;
 #else
     uint64 sec0, sec1;
     uint64 t0, t1;
@@ -265,6 +275,9 @@ countdown_timer_init(void)
 void 
 timer_tick(void) 
 {
+    static int diag_tick_count = 0;
+    if (FINAL_DEV_DIAG && diag_tick_count < 4)
+        printf("[diag][timer_tick] enter\n");
 #if DEBUG
     printf("timer tick\n");
 #endif
@@ -283,6 +296,9 @@ timer_tick(void)
 #ifdef RISCV
     set_next_timeout();
 #endif
+    if (FINAL_DEV_DIAG && diag_tick_count < 4)
+        printf("[diag][timer_tick] exit\n");
+    diag_tick_count++;
 }
 
 /**
