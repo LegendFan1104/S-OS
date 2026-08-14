@@ -37,7 +37,9 @@ extern char trampoline[]; ///< trampoline 代码段的起始地址
 extern void handle_tlbr();
 extern void handle_merr();
 
+#if !defined RISCV
 static void diag_walk_chain(pgtbl_t pt, uint64 va);
+#endif
 
 int devintr(void); ///< 中断判断函数
 
@@ -665,6 +667,7 @@ void forkret(void)
  * @brief 用户态中断和异常处理函数
  *
  */
+#if !defined RISCV
 /* TLB 重填失败诊断：由 tlbrefill.S 在遍历失败时跳到此处（已切到
  * .bss 里的安全栈），打印 PGD/BADV/ERA/失败级数后死循环。 */
 extern uint64 tlbr_diag_stage, tlbr_diag_pgd, tlbr_diag_badv;
@@ -681,10 +684,10 @@ void tlbr_diag(void)
     for (;;)
         ;
 }
-
-static void diag_walk_chain(pgtbl_t pt, uint64 va);
+#endif
 
 /* 调试：打印某个 VA 的完整页表遍历链（l3/l2/l1/leaf），定位断在哪一级 */
+#if !defined RISCV
 static void diag_walk_chain(pgtbl_t pt, uint64 va)
 {
     pte_t *pte = &pt[PX(3, va)];
@@ -715,6 +718,7 @@ static void diag_walk_chain(pgtbl_t pt, uint64 va)
     pte = &pt[PX(0, va)];
     printf(" leaf=0x%llx\n", (unsigned long long)*pte);
 }
+#endif
 
 // 其实xv6-loongarch从uservec进入usertrap时，a0也是trapframe.只不过xv6-loongarch声明为usertrap(void)。我们是可以用a0当trapframe的
 void usertrap(void)
