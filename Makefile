@@ -34,6 +34,8 @@ export CFLAGS += -DSTACK_COPYOUT_DIAG=$(STACK_COPYOUT_DIAG)
 export SATA_DRIVER ?= 0
 ifeq ($(SATA_DRIVER),1)
 export CFLAGS += -DSATA_DRIVER=1
+export CFLAGS += -DBOARD_LS2K=1
+export ASFLAGS += -DBOARD_LS2K=1
 endif
 export LDFLAGS = -z max-page-size=4096
 export WORKPATH = $(shell pwd)
@@ -97,6 +99,14 @@ rv_user_srcs = $(wildcard user/riscv/*.S user/riscv/*.c) #user riscv 文件
 
 #driver与架构有关
 la_driver_srcs = $(wildcard kernel/driver/loongarch/*.c)
+ifeq ($(SATA_DRIVER),1)
+# 板载构建改用 sata_rt.c（照搬 OSKernel2025-rustoswhu 的 ahci.rs 逻辑），
+# 排除旧的实验性 sata.c，避免 sata_init/la_sata_disk_rw 重复定义。
+la_driver_srcs := $(filter-out kernel/driver/loongarch/sata.c,$(la_driver_srcs))
+else
+# QEMU 使用 virtio，排除仅供 2K1000 真板使用的 AHCI 驱动。
+la_driver_srcs := $(filter-out kernel/driver/loongarch/sata_rt.c,$(la_driver_srcs))
+endif
 rv_driver_srcs = $(wildcard kernel/driver/riscv/*.c)
 
 #kernel下还分fs

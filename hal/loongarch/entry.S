@@ -7,9 +7,9 @@
 _entry:
         la.global   $t0, 0f
         jirl        $zero, $t0, 0
-0:      li.d        $t0, 0x900000000000001f   # CA, PLV0, 0x9000 xxxx xxxx xxxx    0001 0001
-        csrwr       $t0, LOONGARCH_CSR_DMWIN0 
-        li.d        $t0, 0x8000000000000001	  # UA, PLV0, 0x8000 xxxx xxxx xxxx   
+0:      li.d        $t0, 0x800000000000000f   # UA, PLV0-3, 0x8000 (与 U-Boot 一致)
+        csrwr       $t0, LOONGARCH_CSR_DMWIN0
+        li.d        $t0, 0x900000000000001f   # CA, PLV0-3, 0x9000 (与 U-Boot 一致)
         csrwr       $t0, LOONGARCH_CSR_DMWIN1
         li.d        $t0, 0x0000000000000000 
         csrwr       $t0, LOONGARCH_CSR_DMWIN2

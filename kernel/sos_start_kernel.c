@@ -90,6 +90,12 @@ int sos_start_kernel()
     // 初始化输出串口
     chardev_init();
     printfinit();
+/* ---- 实验：把 SATA 初始化提前到内核最早期，定位是哪个初始化阶段
+ * 破坏了 SATA 数据路径；同时若第二个核也在跑，会出现重复 [sata] 输出 ---- */
+#if defined SATA_DRIVER
+    sata_init();
+#endif
+    printf("[boot] sata_init done\n");
 #if FINAL_DEV_DIAG
     for (int i = 65; i < 65 + 26; i++)
     {
@@ -104,13 +110,19 @@ int sos_start_kernel()
 #endif
     // 初始化线程和进程
     thread_init();
+    printf("[boot] thread_init done\n");
     proc_init();
+    printf("[boot] proc_init done\n");
     // 初始化物理内存
     pmem_init();
+    printf("[boot] pmem_init done\n");
     vmem_init();
+    printf("[boot] vmem_init done\n");
     slab_init();
+    printf("[boot] slab_init done\n");
     // 初始化中断和异常
     hsai_trap_init();
+    printf("[boot] hsai_trap_init done\n");
     // 初始化磁盘设备。本来想把这个提取到hsai的，但是发现那么做会使la运行速度变慢，先这样
 #if defined RISCV
     plicinit();
@@ -122,21 +134,23 @@ int sos_start_kernel()
     virtio_disk_init();
 #endif
 #else 
-#if defined SATA_DRIVER
-    sata_init();//2K1000 真板: 片上 SATA (AHCI)
-#else
+#if !defined SATA_DRIVER
     virtio_probe();//发现virtio-blk-pci设备
     la_virtio_disk_init();
 #endif
 #endif
     // 初始化文件系统
     init_fs();
+    printf("[boot] init_fs done\n");
     binit();
+    printf("[boot] binit done\n");
     fileinit();
     inodeinit();
     vfs_ext4_init();
+    printf("[boot] vfs_ext4_init done\n");
     // 初始化init线程
     init_process();
+    printf("[boot] init_process done\n");
 #if defined RISCV
     __sync_synchronize();
     riscv_kernel_ready = 1;

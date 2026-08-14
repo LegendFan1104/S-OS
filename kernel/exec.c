@@ -34,7 +34,7 @@ enum redir
 #define S_IFLNK 0120000
 #endif
 #define EXEC_MAX_SYMLINKS 8
-static int flags_to_perm(int flags);
+static uint64 flags_to_perm(int flags);
 static int loadseg(pgtbl_t pt, uint64 va, struct inode *ip, uint offset, uint sz);
 static int elf_load_segments(pgtbl_t pt, struct inode *ip,
                              const elf_header_t *ehdr, uint64 load_bias,
@@ -49,6 +49,8 @@ static int resolve_exec_path(const char *path, char *resolved);
 static void exec_single_thread(proc_t *p);
 static void exec_reset_user_regs(struct trapframe *trapframe);
 static int exec_trace_once = 0;
+
+#define BUSYBOX_EXEC_PATH "/glibc/busybox"
 
 /*
  * Establish a complete ELF image before returning to user mode.  PT_LOAD
@@ -93,11 +95,17 @@ elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
                 continue;
             {
                 char *page = (char *)pmem_alloc_pages(1);
+                uint64 map_perm = PTE_R | PTE_W | PTE_U;
                 if (page == NULL)
                     return -1;
                 memset(page, 0, PGSIZE);
+#if !defined RISCV
+                /* A 2K1000 user leaf is invalid without P and MAT.  The
+                 * generic ELF loader bypasses uvm_grow(), so add them here. */
+                map_perm |= PTE_P | PTE_MAT;
+#endif
                 if (mappages(pt, va, (uint64)page, PGSIZE,
-                             PTE_R | PTE_W | PTE_U) != 1)
+                             map_perm) != 1)
                 {
                     pmem_free_pages(page, 1);
                     return -1;
@@ -155,12 +163,15 @@ elf_load_segments(pgtbl_t pt, struct inode *ip, const elf_header_t *ehdr,
     for (int i = 0; i < ehdr->phnum; i++)
     {
         uint64 phoff = ehdr->phoff + (uint64)i * ehdr->phentsize;
-        int perm;
+        uint64 perm;
         if (ip->i_op->read(ip, 0, (uint64)&ph, phoff, sizeof(ph)) != sizeof(ph))
             return -1;
         if (ph.type != ELF_PROG_LOAD)
             continue;
         perm = flags_to_perm(ph.flags);
+#if !defined RISCV
+        perm |= PTE_P | PTE_MAT | PTE_U;
+#endif
 #if defined RISCV
         if (perm & PTE_W)
             perm |= PTE_R;
@@ -200,7 +211,7 @@ int exec(char *path, char **argv, char **env)
     int is_shell_script = is_sh_script(path); ///< 判断路径是否为shell脚本
     if (is_shell_script)
     {
-        original_path = "/musl/busybox"; ///< 若为脚本，替换为busybox执行脚本
+        original_path = BUSYBOX_EXEC_PATH; ///< 若为脚本，替换为busybox执行脚本
         modified_argv[0] = "busybox";
         modified_argv[1] = "sh";
         modified_argv[2] = path;
@@ -282,6 +293,14 @@ int exec(char *path, char **argv, char **env)
         {
             at_phdr = load_bias + ph.vaddr;
         }
+        else if (ph.type == ELF_PROG_LOAD && at_phdr == 0 &&
+                 ph.off <= ehdr.phoff && ehdr.phoff - ph.off < ph.filesz)
+        {
+            /* AT_PHDR is a user virtual address, not e_phoff's file offset.
+             * Static LoongArch busybox has no PT_PHDR, so derive it from the
+             * PT_LOAD record that contains the ELF program-header table. */
+            at_phdr = load_bias + ph.vaddr + (ehdr.phoff - ph.off);
+        }
         // if(ph.type == ELF_PROG_PHDR)
         // {
         //     //< 本来想加载PHDR的，但是发现没有作用
@@ -294,7 +313,10 @@ int exec(char *path, char **argv, char **env)
         goto bad;
     }
     if (at_phdr == 0)
-        at_phdr = load_bias + ehdr.phoff;
+    {
+        bad_stage = "locate-phdr";
+        goto bad;
+    }
     /* 设置进程内存，页表，虚拟地址，为动态映射mmap做准备 */
     p->virt_addr = low_vaddr;
     p->sz = sz;
@@ -812,9 +834,9 @@ uint64 loadaux(pgtbl_t pt, uint64 sp, uint64 stackbase, uint64 *aux)
     return sp;
 }
 
-static int flags_to_perm(int flags)
+static uint64 flags_to_perm(int flags)
 {
-    int perm = 0;
+    uint64 perm = 0;
 #if defined RISCV
     if (flags & 0x01)
         perm |= PTE_X;

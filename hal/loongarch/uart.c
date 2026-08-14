@@ -134,6 +134,16 @@ void uart_init()
 int put_char_sync( uint8 c )//目前的效果和_write_reg( )一样
 {
 	volatile struct regLSR * lsr = ( volatile struct regLSR* ) ( _reg_base + LSR );
+
+	/* UART hardware treats LF as line feed only. Emit CR first so serial
+	 * terminals return to column zero for every kernel printf line. */
+	if ( c == '\n' )
+	{
+		while ( lsr->thr_empty == 0 )
+			;
+		_write_reg( THR, '\r' );
+	}
+
 	while ( lsr->thr_empty == 0 )
 		;
 	_write_reg( THR, ( uint8 ) c );
