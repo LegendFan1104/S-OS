@@ -66,9 +66,14 @@ void proc_init(void)
         initlock(&p->vma_lock, "vma");
         p->state = UNUSED;
         p->exit_state = 0;
-        /* 内核栈在 allocproc 里分配（buddy 初始化之后）；这里只清零，
-         * 不能提前 pmem_alloc_pages（proc_init 先于 pmem_init 执行）。 */
+#if defined RISCV
+        /* RISC-V kernel stacks are high virtual addresses mapped by
+         * proc_mapstacks().  The DMW stack path is LoongArch-only. */
+        p->kstack = KSTACK((int)(p - pool));
+#else
+        /* LoongArch allocates a DMW kernel stack after pmem_init(). */
         p->kstack = 0;
+#endif
         // p->trapframe = (struct trapframe *)trapframe[p - pool];
         p->trapframe = 0;
         p->parent = 0;
@@ -188,9 +193,9 @@ found:
     p->pagetable = proc_pagetable(p);
     memset(p->sig_set.__val, 0, sizeof(p->sig_set));
     memset(p->sig_pending.__val, 0, sizeof(p->sig_pending));
-    /* 主线程内核栈直接用 buddy 分配的 DMW 地址（与 clone_thread 的
-     * 线程栈一致）。真板 2K1000 上 KSTACK() 高端分页 VA 的页表映射
-     * 经 TLB 重填后不可用（QEMU 不严格检查 MMU 所以正常）。 */
+#if !defined RISCV
+    /* LoongArch uses a buddy-allocated DMW stack because high virtual KSTACK
+     * mappings are unreliable on the 2K1000 TLB refill path. */
     if (p->kstack == 0)
     {
         void *kstack_pa = pmem_alloc_pages(KSTACKSIZE / PGSIZE);
@@ -199,6 +204,7 @@ found:
         memset(kstack_pa, 0, KSTACKSIZE);
         p->kstack = (uint64)kstack_pa;
     }
+#endif
     p->context.ra = (uint64)forkret;
     p->context.sp = p->kstack + KSTACKSIZE;
     p->main_thread = alloc_thread();
@@ -287,12 +293,14 @@ static void freeproc(proc_t *p)
         e = tmp;
     }
 
-    /* 释放主线程内核栈（allocproc 从 buddy 分配的 DMW 栈） */
+#if !defined RISCV
+    /* Release the LoongArch DMW stack allocated in allocproc(). */
     if (p->kstack)
     {
         pmem_free_pages((void *)p->kstack, KSTACKSIZE / PGSIZE);
         p->kstack = 0;
     }
+#endif
 
     if (p->pagetable)
     {

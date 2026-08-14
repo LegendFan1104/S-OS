@@ -746,7 +746,11 @@ vfs_ext4_symlink(const char *target, const char *path)
 int
 vfs_ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *readbytes)
 {
+#if defined RISCV
+    const char *virtual_target = "/musl/busybox";
+#else
     const char *virtual_target = "/glibc/busybox";
+#endif
 
     if (buf == NULL || bufsize == 0)
         return -EINVAL;
