@@ -39,6 +39,8 @@ void hsai_config_pagetable(pgtbl_t kernel_pagetable)
     asm volatile("invtlb  0x0,$zero,$zero");
     // 设置tlb页大小
     w_csr_stlbps(0xcU);
+    /* TLBIDX.PS 与 STLBPS 一致（4K 页），保证 tlbfill 填出的表项页大小正确 */
+    __asm__ volatile("csrwr %0, 0x10" :: "r"(0xcUL));
     // 设置asid 表项
     w_csr_asid(0x0U);
     // 设置高位tlbehi项， 虚页号相关消息

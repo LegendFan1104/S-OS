@@ -48,11 +48,10 @@
 
 #define LOONGARCH_CSR_TLBRENTRY		0x88	/* TLB refill exception entry */
 #define LOONGARCH_CSR_TLBRBADV		0x89	/* TLB refill badvaddr */
-#define LOONGARCH_CSR_TLBRSAVE		0x8b	/* KScratch for TLB
+#define LOONGARCH_CSR_TLBRSAVE		0x8b	/* KScratch for TLB */
 
 #define LOONGARCH_CSR_STLBPS        0x1e    
 
 
 /* Direct Map window 0/1 */
-
 

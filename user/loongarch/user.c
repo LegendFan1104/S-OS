@@ -5,6 +5,9 @@
 #define FINAL_DEV_DIAG 0
 #endif
 
+#define BUSYBOX_EXEC_PATH "/glibc/busybox"
+#define BUSYBOX_EXEC_DIR "/glibc"
+
 #ifndef AT_REMOVEDIR
 #define AT_REMOVEDIR 0x200
 #endif
@@ -517,7 +520,7 @@ static int run_busybox_argv(char *argv[])
     if (pid == 0)
     {
         char *newenviron[] = {NULL};
-        sys_execve("/musl/busybox", argv, newenviron);
+        sys_execve(BUSYBOX_EXEC_PATH, argv, newenviron);
         print("execve error.\n");
         exit(1);
     }
@@ -568,13 +571,13 @@ void cleanup_ltp_case(const char *profile_name, const char *case_name)
 void prepare_ltp_tmpdir(const char *profile_name, const char *tmpdir)
 {
     char *rm_argv[] = {
-        "/musl/busybox",
+        BUSYBOX_EXEC_PATH,
         "rm",
         "-rf",
         (char *)tmpdir,
         0};
     char *mkdir_argv[] = {
-        "/musl/busybox",
+        BUSYBOX_EXEC_PATH,
         "mkdir",
         "-p",
         (char *)tmpdir,
@@ -670,7 +673,7 @@ static int run_final_script_with_env(const char *script_name, char *const envp[]
         char *newargv[] = {"busybox", "sh", script_path, 0};
 
         sys_chdir("/glibc");
-        sys_execve("/musl/busybox", newargv, (char **)envp);
+        sys_execve(BUSYBOX_EXEC_PATH, newargv, (char **)envp);
         printf("final runner exec failed: %s\n", script_path);
         exit(127);
     }
@@ -701,7 +704,7 @@ int run_final_shell(const char *label, const char *script, char *const envp[])
         char *newargv[] = {"busybox", "sh", "-c", (char *)script, 0};
 
         sys_chdir("/glibc");
-        sys_execve("/musl/busybox", newargv, (char **)envp);
+        sys_execve(BUSYBOX_EXEC_PATH, newargv, (char **)envp);
         printf("final shell exec failed: %s\n", label);
         exit(127);
     }
@@ -1272,7 +1275,7 @@ void setup_dynamic_library()
         if (pid == 0)
         {
             char *newenviron[] = {NULL};
-            sys_execve("/musl/busybox", busybox_setup_dynamic_library[i].name, newenviron);
+            sys_execve(BUSYBOX_EXEC_PATH, busybox_setup_dynamic_library[i].name, newenviron);
             exit(0);
         }
         waitpid(pid, &status, 0);
@@ -1315,11 +1318,10 @@ void test_libc_all()
 
 void test_busybox()
 {
-    // sys_chdir("/musl");
-    sys_chdir("/musl");
+    sys_chdir(BUSYBOX_EXEC_DIR);
     //  sys_chdir("/sdcard");
     int pid, status, i;
-    printf("#### OS COMP TEST GROUP START busybox-musl ####\n");
+    printf("#### OS COMP TEST GROUP START busybox-runtime ####\n");
     // sys_chdir("musl");
     // sys_chdir("/glibc");
     // sys_chdir("/sdcard");
@@ -1346,14 +1348,14 @@ void test_busybox()
         else
             printf("testcase busybox %s failed\n", busybox_cmd[i]);
     }
-    printf("#### OS COMP TEST GROUP END busybox-musl ####\n");
+    printf("#### OS COMP TEST GROUP END busybox-runtime ####\n");
 
     printf("#### OS COMP TEST GROUP START busybox-glibc ####\n");
     /*
      * Keep the glibc score group on the stable musl busybox runtime for now.
      * This preserves expected output while avoiding glibc applet aborts.
      */
-    sys_chdir("/musl");
+    sys_chdir(BUSYBOX_EXEC_DIR);
     for (i = 0; busybox[i].name[1]; i++)
     {
         if (!busybox[i].valid)
@@ -1377,7 +1379,7 @@ void test_busybox()
         else
             printf("testcase busybox %s failed\n", busybox_cmd[i]);
     }
-    printf("#### OS COMP TEST GROUP END busybox-glibc ####\n");
+    printf("#### OS COMP TEST GROUP END busybox-runtime-2 ####\n");
 }
 
 static char *libctest_glibc_submit_cases[] = {
