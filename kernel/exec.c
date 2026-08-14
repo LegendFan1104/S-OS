@@ -50,7 +50,11 @@ static void exec_single_thread(proc_t *p);
 static void exec_reset_user_regs(struct trapframe *trapframe);
 static int exec_trace_once = 0;
 
+#if defined RISCV
+#define BUSYBOX_EXEC_PATH "/musl/busybox"
+#else
 #define BUSYBOX_EXEC_PATH "/glibc/busybox"
+#endif
 
 /*
  * Establish a complete ELF image before returning to user mode.  PT_LOAD
