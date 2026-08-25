@@ -39,7 +39,7 @@ T2026104869910625
 开发过程中的详细设计文档、架构说明、开发进展、测试体系等见 **[docx/](docx/)。**
 ## 运行方法
 
-1. 拉取docker官方测评镜像
+1. 拉取 docker 官方测评镜像
 ```bash
 docker run -it --name sos -v "$(pwd)":/workspace -w /workspace zhouzhouyi/os-contest:20260510 bash
 docker start sos
@@ -51,7 +51,7 @@ docker exec -it sos bash
 make clean && make all
 ```
 
-3. qemu 测试
+3. 运行 qemu 测试
 
 ```bash
 # riscv测试
@@ -73,9 +73,9 @@ qemu-system-loongarch64 -kernel kernel-la -m 1G -nographic -smp 1 \
   -rtc base=utc
 ```
 
-1. 真实物理版测试
+4. 真实物理版测试
 
-具体方法见 **[上板文档](docx/下板文档.md)。**
+具体方法见 **[下板文档](docx/下板文档.md)。**
 
 ```bash
 # riscv 板载
