@@ -68,4 +68,8 @@
 /include/kernel/rv_init_code.h
 /sdcards-final.tar.xz
 la-flash/
-bmtest/
+# bmtest/
+AGENTS.md
+答辩/
+*.elf
+*.ld
