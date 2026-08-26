@@ -2,9 +2,7 @@
 
 ## S-OS队（SuperOS）
 
-T2026104869910625
-
-## 团队成员
+**团队成员：**
 
 | 姓名   | 专业   | 学校   |
 | ---- | ---- | ---- |
@@ -23,20 +21,13 @@ T2026104869910625
 
 本项目获得了**2026年操作系统设计赛内核实现赛-OS内核实现赛道三等奖**。
 
-初赛阶段可通过 basic、busybox、libctest、libcbench、lua、部分ltp 等测试用例（详见primary分支）。
-
-决赛一阶段可通过 cagent 全部测试以及 buildstorm 环境检查与最小构建（详见final1分支）。
+初赛阶段可通过 basic、busybox、libctest、libcbench、lua、部分ltp 等测试用例。决赛一阶段可通过 cagent 全部测试以及 buildstorm 环境检查与最小构建。
 
 
 ## 文档
 
-决赛1阶段文档、ppt见 **[决赛1阶段提交/](决赛1阶段提交/)。**
-
-受限于仓库大小，决赛1阶段答辩视频、PPT 见 **[这里](https://pan.baidu.com/s/1dT_Rs1xGbE3AX5GjiBEMoA?pwd=sos3)。**
-
-决赛1阶段的内核优化文档见 **[这里](决赛1阶段提交/决赛1内核优化文档.md)。**
-
 开发过程中的详细设计文档、架构说明、开发进展、测试体系等见 **[docx/](docx/)。**
+
 ## 运行方法
 
 1. 拉取 docker 官方测评镜像
